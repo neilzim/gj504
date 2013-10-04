@@ -78,8 +78,8 @@ class klipsub_task(object):
         disable_sub = self.disable_sub
         klip_mode = self.klip_mode
 
-        klipsub_img = np.tile(np.nan, fr_shape)
-        klippsf_img = klipsub_img.copy()
+        klippsf_img = np.tile(np.nan, fr_shape)
+        klipsub_img = np.zeros(fr_shape)
         derot_klipsub_img = klipsub_img.copy()
 
         if fr_ind%diagnos_stride == 0:
@@ -116,8 +116,11 @@ class klipsub_task(object):
                     F = I + I_mean
                 else:
                     F = I - I_proj
-                klipsub_img += reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
-                klippsf_img += reconst_zone(I_proj + I_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                klipsub_zone_img = reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                klipsub_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klipsub_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
+                klippsf_zone_img = reconst_zone(I_proj + I_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                klippsf_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klippsf_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
+
                 if store_archv:
                     result_dict[fr_ind][rad_ind][az_ind]['I'] = I
                     result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
@@ -133,7 +136,14 @@ class klipsub_task(object):
                           (fr_ind+1, rad_ind+1, len(op_rad), az_ind+1, len(op_az[rad_ind]),\
                            np.sqrt(np.mean((I + I_mean)**2)), np.sqrt(np.mean(F**2)))
         # De-rotate the KLIP-subtracted image
+        submask_img = klipsub_img.copy()
+        submask_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = 1.
         derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
+        derot_submask_img = rotate(submask_img, -parang_seq[fr_ind], reshape=False)
+        exc_ind = np.where(derot_submask_img < 0.9)
+        derot_klipsub_img[exc_ind] = np.nan
+
+        #derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
         if fr_ind % diagnos_stride == 0:
             print "***** Frame %d has been PSF-sub'd and derotated. *****" % (fr_ind+1)
             if store_klbasis == True:
@@ -329,8 +339,7 @@ def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_d
     op_fr = config_dict['op_fr']
     fr_shape = config_dict['fr_shape']
     N_op_fr = len(op_fr)
-    #klipsub_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
-    klipsub_cube = np.tile(np.nan, (N_op_fr, fr_shape[0], fr_shape[1]))
+    klipsub_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
     klippsf_cube = klipsub_cube.copy()
     derot_klipsub_cube = klipsub_cube.copy()
 
@@ -517,7 +526,8 @@ def get_residual_stats(config_dict, Phi_0, coadd_img, med_img, xycent=None):
         else:
             R1 = R_out[rad_ind-1]
         annular_mask_logic = np.vstack([np.less_equal(rad_vec, R2),\
-                                        np.greater(rad_vec, R1)])
+                                        np.greater(rad_vec, R1),\
+                                        np.isfinite(coadd_img.ravel())])
         annular_mask = np.nonzero( np.all(annular_mask_logic, axis=0) )[0]
         coadd_annular_rms.append( np.sqrt( np.mean( np.ravel(coadd_img)[annular_mask]**2 ) ) )
         print "\tannulus %d/%d: %.3f in KLIP sub'd, derotated, coadded annlus" % (rad_ind+1, len(op_rad), coadd_annular_rms[-1])
@@ -547,8 +557,8 @@ def get_residual_stats(config_dict, Phi_0, coadd_img, med_img, xycent=None):
                 zonal_rms[rad_ind][az_ind] = np.sqrt( np.mean( np.ravel(coadd_img)[derot_zonemask]**2 ) )
             delimiter = ', '
             print "\tby zone: %s" % delimiter.join(["%.3f" % zonal_rms[rad_ind][a] for a in op_az[rad_ind]])
-    print "Peak, min values in final co-added image: %0.3f, %0.3f" % (np.amax(coadd_img), np.amin(coadd_img))
-    print "Peak, min values in median of de-rotated images: %0.3f, %0.3f" % (np.amax(med_img), np.amin(med_img))
+    print "Peak, min values in final co-added image: %0.3f, %0.3f" % (np.nanmax(coadd_img), np.nanmin(coadd_img))
+    print "Peak, min values in median of de-rotated images: %0.3f, %0.3f" % (np.nanmax(med_img), np.nanmin(med_img))
     return coadd_annular_rms, zonal_rms
 
 if __name__ == "__main__":
@@ -562,7 +572,7 @@ if __name__ == "__main__":
     #
     track_mode = False
     #mode_cut = [500]
-    mode_cut = [10]
+    mode_cut = [400]
     R_inner = 220.
     R_out = [260.]
     #R_inner = 110.
@@ -624,10 +634,10 @@ if __name__ == "__main__":
     # Set additional program parameters
     #
     store_results = True
-    store_archv = True
+    store_archv = False
     diagnos_stride = 100
-    #op_fr = np.arange(N_fr)
-    op_fr = np.arange(0, N_fr, diagnos_stride)
+    op_fr = np.arange(N_fr)
+    #op_fr = np.arange(0, N_fr, diagnos_stride)
     N_op_fr = op_fr.shape[0]
     op_rad = range(N_rad)
     #op_az = [range(N_az[i]) for i in range(N_rad)]
@@ -651,8 +661,8 @@ if __name__ == "__main__":
                    'ref_table':ref_table, 'zonemask_table_1d':zonemask_table_1d,
                    'zonemask_table_2d':zonemask_table_2d}
     klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr)]
-    #N_proc = 12
-    N_proc = 5
+    N_proc = 20
+    #N_proc = 5
     print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
     klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                             result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,

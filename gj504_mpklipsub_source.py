@@ -140,6 +140,8 @@ class klipsub_task(object):
         submask_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = 1.
         derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
         derot_submask_img = rotate(submask_img, -parang_seq[fr_ind], reshape=False)
+        #derot_submask_hdu = pyfits.PrimaryHDU(derot_submask_img.astype(np.float32))
+        #derot_submask_hdu.writeto("%s/submask_fr%03d.fits" % (result_dir, fr_ind), clobber=True)
         exc_ind = np.where(derot_submask_img < 0.9)
         derot_klipsub_img[exc_ind] = np.nan
 
@@ -567,12 +569,13 @@ if __name__ == "__main__":
     #
     klip_mode = False 
     mean_sub = True
+    coadd_full_overlap_only = True
     #
     # point PCA search zone config
     #
     track_mode = False
     #mode_cut = [500]
-    mode_cut = [400]
+    mode_cut = [10]
     R_inner = 220.
     R_out = [260.]
     #R_inner = 110.
@@ -637,8 +640,8 @@ if __name__ == "__main__":
     store_archv = False
     diagnos_stride = 100
     op_fr = np.arange(N_fr)
-    #op_fr = np.arange(0, N_fr, diagnos_stride)
-    N_op_fr = op_fr.shape[0]
+    op_fr = np.arange(0, N_fr, diagnos_stride)
+    #N_op_fr = op_fr.shape[0]
     op_rad = range(N_rad)
     #op_az = [range(N_az[i]) for i in range(N_rad)]
     op_az = [[0]]
@@ -661,8 +664,8 @@ if __name__ == "__main__":
                    'ref_table':ref_table, 'zonemask_table_1d':zonemask_table_1d,
                    'zonemask_table_2d':zonemask_table_2d}
     klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr)]
-    N_proc = 20
-    #N_proc = 5
+    #N_proc = 20
+    N_proc = 1
     print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
     klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                             result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
@@ -673,14 +676,16 @@ if __name__ == "__main__":
     #
     # Form mean and median of derotated residual images, and the mean and median of the PSF estimates.
     #
-#   coadd_img = mean(derot_klipsub_cube, axis=0)
-#   med_img = np.median(derot_klipsub_cube, axis=0)
-#   mean_klippsf_img = np.mean(klippsf_cube, axis=0)
-#   med_klippsf_img = np.median(klippsf_cube, axis=0)
     coadd_img = nanmean(derot_klipsub_cube, axis=0)
     med_img = nanmedian(derot_klipsub_cube, axis=0)
     mean_klippsf_img = nanmean(klippsf_cube, axis=0)
     med_klippsf_img = nanmedian(klippsf_cube, axis=0)
+    if coadd_full_overlap_only:
+        sum_collapse_img = np.sum(derot_klipsub_cube, axis=0)
+        exclude_ind = np.isnan(sum_collapse_img)
+        coadd_img[exclude_ind] = np.nan
+        med_img[exclude_ind] = np.nan
+
 #    coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
 	
     #

@@ -638,7 +638,7 @@ if __name__ == "__main__":
     #
     store_results = True
     store_archv = True
-    diagnos_stride = 100
+    diagnos_stride = 50
     op_fr = np.arange(N_fr)
     #op_fr = np.arange(0, N_fr, diagnos_stride)
     op_rad = range(N_rad)
@@ -683,9 +683,7 @@ if __name__ == "__main__":
         exclude_ind = np.isnan(sum_collapse_img)
         coadd_img[exclude_ind] = np.nan
         med_img[exclude_ind] = np.nan
-
-#    coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
-	
+    coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
     #
     # Get statistics from co-added and median residual images
     #
@@ -725,9 +723,9 @@ if __name__ == "__main__":
         coadd_img_hdu = pyfits.PrimaryHDU(coadd_img.astype(np.float32))
         coadd_img_hdu.writeto(coadd_img_fname, clobber=True)
         print "Wrote average of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (coadd_img.nbytes/10.**6, coadd_img_fname)
-#        coadd_rebin2x2_img_hdu = pyfits.PrimaryHDU(coadd_rebin2x2_img.astype(np.float32))
-#        coadd_rebin2x2_img_hdu.writeto(coadd_rebin2x2_img_fname, clobber=True)
-#        print "Wrote 2x2-rebinned average of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (coadd_rebin2x2_img.nbytes/10.**6, coadd_rebin2x2_img_fname)
+        coadd_rebin2x2_img_hdu = pyfits.PrimaryHDU(coadd_rebin2x2_img.astype(np.float32))
+        coadd_rebin2x2_img_hdu.writeto(coadd_rebin2x2_img_fname, clobber=True)
+        print "Wrote 2x2-rebinned average of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (coadd_rebin2x2_img.nbytes/10.**6, coadd_rebin2x2_img_fname)
         med_img_hdu = pyfits.PrimaryHDU(med_img.astype(np.float32))
         med_img_hdu.writeto(med_img_fname, clobber=True)
         print "Wrote median of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (med_img.nbytes/10.**6, med_img_fname)

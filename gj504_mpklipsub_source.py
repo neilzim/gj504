@@ -574,8 +574,8 @@ if __name__ == "__main__":
     # point PCA search zone config
     #
     track_mode = False
-    #mode_cut = [500]
-    mode_cut = [10]
+    mode_cut = [500]
+    #mode_cut = [10]
     R_inner = 220.
     R_out = [260.]
     #R_inner = 110.
@@ -637,11 +637,10 @@ if __name__ == "__main__":
     # Set additional program parameters
     #
     store_results = True
-    store_archv = False
+    store_archv = True
     diagnos_stride = 100
     op_fr = np.arange(N_fr)
-    op_fr = np.arange(0, N_fr, diagnos_stride)
-    #N_op_fr = op_fr.shape[0]
+    #op_fr = np.arange(0, N_fr, diagnos_stride)
     op_rad = range(N_rad)
     #op_az = [range(N_az[i]) for i in range(N_rad)]
     op_az = [[0]]
@@ -664,8 +663,7 @@ if __name__ == "__main__":
                    'ref_table':ref_table, 'zonemask_table_1d':zonemask_table_1d,
                    'zonemask_table_2d':zonemask_table_2d}
     klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr)]
-    #N_proc = 20
-    N_proc = 1
+    N_proc = 12
     print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
     klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                             result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,

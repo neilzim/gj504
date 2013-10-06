@@ -574,7 +574,7 @@ if __name__ == "__main__":
     # point PCA search zone config
     #
     track_mode = False
-    mode_cut = [500]
+    mode_cut = [400]
     #mode_cut = [10]
     R_inner = 220.
     R_out = [260.]

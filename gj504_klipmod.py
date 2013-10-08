@@ -4,19 +4,63 @@
 Implement KLIP point source forward model on LMIRcam kappa And ADI data.
 
 """
-import pdb
 import numpy as np
-from multiprocessing import Process, Queue, cpu_count
 import time as time
 import pyfits
 from scipy.ndimage.interpolation import *
 from scipy.interpolate import *
 from scipy.optimize import *
+import multiprocessing
 import sys
 import os
+import pdb
 import cPickle as pickle
 import matplotlib.pyplot as plt
 import matplotlib
+
+class Worker(multiprocessing.Process):
+    def __init__(self, task_queue, result_queue):
+        multiprocessing.Process.__init__(self)
+        self.task_queue = task_queue
+        self.result_queue = result_queue
+
+    def run(self):
+        proc_name = self.name
+        while True:
+            next_task = self.task_queue.get()
+            if next_task is None:
+                self.task_queue.task_done()
+                break
+            answer = next_task()
+            self.task_queue.task_done()
+            self.result_queue.put(answer)
+        return
+
+class eval_adiklip_srcmodel_task(object):
+    def __init__(self, fr_ind, adiklip_config, zonemask_1d, Z, F, srcmodel, src_amp, src_abframe_xy):
+        self.fr_ind = fr_ind
+        self.adiklip_config = adiklip_config
+        self.zonemask_1d = zonemask_1d
+        self.Z = Z
+        self.F = F
+        self.srcmodel = srcmodel
+        self.src_amp = src_amp
+        self.src_abframe_xy = src_abframe_xy
+    def __call__(self):
+        fr_shape = self.adiklip_config['fr_shape']
+        srcmodel_cent_xy = ((self.srcmodel.shape[1] - 1)/2., (self.srcmodel.shape[0] - 1)/2.)
+        if self.src_abframe_xy[0] >= fr_shape[1] or self.src_abframe_xy[1] >= fr_shape[0] or min(self.src_abframe_xy) < 0:
+            print 'bad dest:', self.src_abframe_xy
+            return np.finfo(np.float).max 
+        abframe_synthsrc_img = superpose_srcmodel(data_img = np.zeros(fr_shape), srcmodel_img = self.src_amp*self.srcmodel,
+                                                  srcmodel_destxy = self.src_abframe_xy, srcmodel_centxy = srcmodel_cent_xy)
+        Pmod = np.ravel(abframe_synthsrc_img)[ self.zonemask_1d ].copy()
+        Projmat = np.dot(self.Z.T, self.Z)
+        Pmod_proj = np.dot(Pmod, Projmat)
+        res_vec = self.F - Pmod + Pmod_proj
+        return (self.fr_ind, res_vec, np.sum(res_vec**2))
+    def __str__(self):
+        return 'frame %d' % (self.fr_ind+1)
 
 def superpose_srcmodel(data_img, srcmodel_img, srcmodel_destxy, srcmodel_centxy = None, rolloff_rad = None):
     assert(len(data_img.shape) == 2)
@@ -62,32 +106,67 @@ def reconst_zone(data_vec, pix_table, img_dim):
         reconstrd_img[row, col] = pix_val
     return reconstrd_img
 
-def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, adiklip_config, adiklip_data, srcmodel):
+def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, adiklip_config, adiklip_data, srcmodel):
     if op_fr == None:
         op_fr = adiklip_config['op_fr']
-    N_op_fr = len(op_fr)
-    cost_queue = Queue()
+    if rad_ind == None:
+        rad_ind = 0
+    if az_ind == None:
+        az_ind = 0
     total_sumofsq_cost = 0
-
-    mp_op_fr = list()
-    for i in range(N_proc):
-        chunk_size = round(float(N_op_fr) / N_proc)
-        fr_ind_beg = i * chunk_size
-        if i != N_proc - 1:
-            fr_ind_end = fr_ind_beg + chunk_size
-        else:
-            fr_ind_end = N_op_fr
-        mp_op_fr.append(op_fr[fr_ind_beg:fr_ind_end])
-
-    for i in range(N_proc):
-        task = Process(target = eval_adiklip_srcmodel, args = (p, mp_op_fr[i], adiklip_config,
-                                                               adiklip_data, srcmodel, cost_queue))
-        task.start()
-
-    for i in range(N_proc):
-        total_sumofsq_cost += cost_queue.get()
-
+    amp = p[0]
+    theta = np.arctan2(p[2], p[1])
+    rho = np.sqrt(p[1]**2 + p[2]**2)
+    abframe_theta_seq = [theta - np.deg2rad(parang) for parang in parang_seq[op_fr]]
+    abframe_xy_seq = [( cent_xy[0] + rho*np.cos(t),
+                        cent_xy[1] + rho*np.sin(t) ) for t in abframe_theta_seq]
+    # Establish communication queues and start the 'workers'
+    eval_tasks = multiprocessing.JoinableQueue()
+    eval_results = multiprocessing.Queue()
+    workers = [ Worker(eval_tasks, eval_results) for j in xrange(N_proc) ]
+    for w in workers:
+        w.start()
+    # Enqueue the operand frames
+    for i, fr_ind in enumerate(op_fr):
+        eval_tasks.put( eval_adiklip_srcmodel_task(fr_ind, adiklip_config, adiklip_config['zonemask_table_1d'][fr_ind][rad_ind][az_ind],
+                                                   adiklip_data[fr_ind][rad_ind][az_ind]['Z'][:,:], adiklip_data[fr_ind][rad_ind][az_ind]['F'],
+                                                   srcmodel, amp, abframe_xy_seq[i]) )
+    # Kill each worker
+    for j in xrange(N_proc):
+        eval_tasks.put(None)
+    # Wait for all of the tasks to finish
+    eval_tasks.join()
+    # Organize results
+    N_toget = len(op_fr)
+    while N_toget:
+        result = eval_results.get()
+        fr_ind = result[0]
+        i = np.where(op_fr == fr_ind)[0][0]
+        res_vec = result[1]
+        cost = result[2]
+        total_sumofsq_cost += cost
+        N_toget -= 1
     return total_sumofsq_cost
+
+#    mp_op_fr = list()
+#    for i in range(N_proc):
+#        chunk_size = round(float(N_op_fr) / N_proc)
+#        fr_ind_beg = i * chunk_size
+#        if i != N_proc - 1:
+#            fr_ind_end = fr_ind_beg + chunk_size
+#        else:
+#            fr_ind_end = N_op_fr
+#        mp_op_fr.append(op_fr[fr_ind_beg:fr_ind_end])
+#
+#    for i in range(N_proc):
+#        task = Process(target = eval_adiklip_srcmodel, args = (p, mp_op_fr[i], adiklip_config,
+#                                                               adiklip_data, srcmodel, cost_queue))
+#        task.start()
+#
+#    for i in range(N_proc):
+#        total_sumofsq_cost += cost_queue.get()
+#
+#    return total_sumofsq_cost
 
 def lnprob_adiklip_srcmodel(p, N_proc, op_fr, adiklip_config, adiklip_data, srcmodel):
     img_shape = adiklip_config['fr_shape']
@@ -141,7 +220,7 @@ def eval_adiklip_srcmodel(p, op_fr, adiklip_config, adiklip_data, srcmodel, cost
         for rad_ind in op_rad:
             for az_ind in op_az[rad_ind]:
                 Pmod = np.ravel(abframe_synthsrc_cube[op_fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy()
-                Pmod -= np.mean(Pmod)
+                #Pmod -= np.mean(Pmod)
                 Z = klip_data[fr_ind][rad_ind][az_ind]['Z'][:,:]
                 Projmat = np.dot(Z.T, Z)
                 F = klip_data[fr_ind][rad_ind][az_ind]['F']
@@ -164,9 +243,9 @@ if __name__ == "__main__":
     klipmod_result_dir = '/disk1/zimmerman/GJ504/apr21_longL/klipmod_results'
     #klipsub_archv_fname = "%s/gj504_longL_sepcanon_rebin2x2_srcklip_rad130_dphi90_mode500_klipsub_archv.pkl" % klipsub_result_dir
     #synthpsf_fname = '%s/psf_model_rebin2x2.fits' % data_dir
-    klipsub_archv_fname =   "%s/gj504_longL_sepcanon_srcklip_rad260_dphi90_mode500_klipsub_archv.pkl" % klipsub_result_dir
+    klipsub_archv_fname =   "%s/gj504_longL_sepcanon_srcklip_rad260_dphi50_mode500_klipsub_archv.pkl" % klipsub_result_dir
     klipsub_res_img_fname = '%s/gj504_longL_sepcanon_srcklip_rad260_dphi90_mode500_res_coadd.fits' % klipsub_result_dir
-    synthpsf_fname = '%s/psf_model_rebin.fits' % data_dir
+    synthpsf_fname = '%s/psf_model.fits' % data_dir
 
     result_label = 'gj504_longL_sepcanon'
     guess_srcmodel_fname = '%s/%s_guess_srcmodel_img.fits' % (klipmod_result_dir, result_label)
@@ -175,8 +254,8 @@ if __name__ == "__main__":
     final_res_cube_fname = '%s/%s_final_res_cube.fits' % (klipmod_result_dir, result_label)
     fbf_res_cube_fname = '%s/%s_fbf_res_cube.fits' % (klipmod_result_dir, result_label)
 
-    #do_MLE = True
-    do_MLE = False
+    do_MLE = True
+    #do_MLE = False
     do_frbyfr_MLE = False
     do_MCMC = False
 
@@ -251,17 +330,17 @@ if __name__ == "__main__":
                                             srcmodel_destxy = posguess_xy, srcmodel_centxy = crop_synthpsf_cent_xy)
     guess_srcmodel_img[exclude_ind] = np.nan
     guess_srcmodel_hdu = pyfits.PrimaryHDU(guess_srcmodel_img.astype(np.float32))
-    guess_srcmodel_hdu.writeto(guess_srcmodel_fname)
+    guess_srcmodel_hdu.writeto(guess_srcmodel_fname, clobber=True)
     print "Wrote the guess for source model to %s" % guess_srcmodel_fname
     #
     # Evaluate cost of guess model
     #
-    N_proc = 24
+    N_proc = 12
     start_time = time.time()
     #guess_cost = eval_adiklip_srcmodel(p = p0, op_fr = op_fr, adiklip_config = klip_config, adiklip_data = klip_data,\
     #                                   srcmodel = synthpsf_img, res_cube_fname=guess_res_cube_fname)
-    guess_cost = mp_eval_adiklip_srcmodel(p = p0, N_proc = N_proc, op_fr = None, adiklip_config = klip_config,
-                                          adiklip_data = klip_data, srcmodel = crop_synthpsf_img)
+    guess_cost = mp_eval_adiklip_srcmodel(p = p0, N_proc = N_proc, op_fr = op_fr, rad_ind = None, az_ind = None,
+                                          adiklip_config = klip_config, adiklip_data = klip_data, srcmodel = crop_synthpsf_img)
     end_time = time.time()
     exec_time = end_time - start_time
     print "Guess param cost func evaluation = %.1f. Took %dm%02ds to evaluate KLIP source model cost for %d ADI frames" %\
@@ -276,7 +355,7 @@ if __name__ == "__main__":
         #                                        args = (op_fr, klip_config, klip_data, synthpsf_img),
         #                                        approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=2)
         p_sol, final_cost, info = fmin_l_bfgs_b(func = mp_eval_adiklip_srcmodel, x0 = p0,
-                                                args = (N_proc, op_fr, klip_config, klip_data, crop_synthpsf_img),
+                                                args = (N_proc, op_fr, None, None, klip_config, klip_data, crop_synthpsf_img),
                                                 approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=2)
         end_time = time.time()
         exec_time = end_time - start_time
@@ -296,7 +375,7 @@ if __name__ == "__main__":
                                                 srcmodel_destxy = mle_sol_pos_xy, srcmodel_centxy = crop_synthpsf_cent_xy)
         final_srcmodel_img[exclude_ind] = np.nan
         final_srcmodel_hdu = pyfits.PrimaryHDU(final_srcmodel_img.astype(np.float32))
-        final_srcmodel_hdu.writeto(final_srcmodel_fname)
+        final_srcmodel_hdu.writeto(final_srcmodel_fname, clobber=True)
         print "Wrote the guess for source model to %s" % guess_srcmodel_fname
         if do_frbyfr_MLE:
             #

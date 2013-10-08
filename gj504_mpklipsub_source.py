@@ -122,13 +122,13 @@ class klipsub_task(object):
                 klippsf_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klippsf_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
 
                 if store_archv:
-                    result_dict[fr_ind][rad_ind][az_ind]['I'] = I
-                    result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
-                    result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z
-                    result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv
+                    #result_dict[fr_ind][rad_ind][az_ind]['I'] = I
+                    #result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
+                    result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
+                    #result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv
                     #result_dict[fr_ind][rad_ind][az_ind]['Projmat'] = Projmat
-                    result_dict[fr_ind][rad_ind][az_ind]['I_proj'] = I_proj
-                    result_dict[fr_ind][rad_ind][az_ind]['F'] = F
+                    #result_dict[fr_ind][rad_ind][az_ind]['I_proj'] = I_proj
+                    result_dict[fr_ind][rad_ind][az_ind]['F'] = F.astype(np.float32)
                 if fr_ind % diagnos_stride == 0:
                     klbasis_cube[:N_modes,:,:] += reconst_zone_cube(Z, zonemask_table_2d[fr_ind][rad_ind][az_ind],
                                                                     cube_dim = (N_modes, fr_shape[0], fr_shape[1]))
@@ -574,13 +574,14 @@ if __name__ == "__main__":
     # point PCA search zone config
     #
     track_mode = False
-    mode_cut = [400]
+    mode_cut = [500]
     #mode_cut = [10]
     R_inner = 220.
     R_out = [260.]
     #R_inner = 110.
     #R_out = [130.]
     DPhi = [90.]
+    #DPhi = [50.]
     #R_out = [130.]
     #DPhi = [90.]
     Phi_0 = [53.]
@@ -733,6 +734,6 @@ if __name__ == "__main__":
             os.remove(klipsub_archv_fname)
         if store_archv:
             klipsub_archv = open(klipsub_archv_fname, 'wb') 
-            pickle.dump((klip_config, klip_data), klipsub_archv)
+            pickle.dump((klip_config, klip_data), klipsub_archv, protocol=2)
             klipsub_archv.close()
             print "Wrote KLIP reduction (%.3f Mb) archive to %s" % (os.stat(klipsub_archv_fname).st_size/10.**6, klipsub_archv_fname)

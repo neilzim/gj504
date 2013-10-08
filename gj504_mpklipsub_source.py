@@ -45,7 +45,7 @@ class Worker(multiprocessing.Process):
 
 class klipsub_task(object):
     def __init__(self, fr_ind, data_cube, config_dict, result_dict, result_dir, diagnos_stride,
-                 store_klbasis=False, disable_sub=False, klip_mode=True):
+                 store_klbasis=False, disable_sub=False, use_svd=True):
          self.fr_ind = fr_ind
          self.data_cube = data_cube
          self.config_dict = config_dict
@@ -54,7 +54,7 @@ class klipsub_task(object):
          self.diagnos_stride = diagnos_stride
          self.store_klbasis = store_klbasis
          self.disable_sub = disable_sub
-         self.klip_mode = klip_mode
+         self.use_svd = use_svd
     def __call__(self):
         fr_shape = self.config_dict['fr_shape']
         parang_seq = self.config_dict['parang_seq']
@@ -76,60 +76,62 @@ class klipsub_task(object):
         diagnos_stride = self.diagnos_stride
         store_klbasis = self.store_klbasis
         disable_sub = self.disable_sub
-        klip_mode = self.klip_mode
+        use_svd = self.use_svd
 
         klippsf_img = np.tile(np.nan, fr_shape)
         klipsub_img = np.zeros(fr_shape)
         derot_klipsub_img = klipsub_img.copy()
 
         if fr_ind%diagnos_stride == 0:
-            klbasis_cube = np.zeros((max(mode_cut), fr_shape[0], fr_shape[1]))
+            if max(mode_cut) > 0:
+                klbasis_cube = np.zeros((max(mode_cut), fr_shape[0], fr_shape[1]))
+            else:
+                klbasis_cube = None
         for rad_ind in op_rad:
             for az_ind in op_az[rad_ind]:
                 I = np.ravel(data_cube[fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy() 
                 R = np.zeros((ref_table[fr_ind][rad_ind].shape[0], zonemask_table_1d[fr_ind][rad_ind][az_ind].shape[0]))
                 for j, ref_fr_ind in enumerate(ref_table[fr_ind][rad_ind]):
                     R[j,:] = np.ravel(data_cube[ref_fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy()
-                if klip_mode == True: # following Soummer et al. 2012
-                    #I_mean = np.mean(I)
-                    #I -= I_mean
-                    #R -= R.mean(axis=1).reshape(-1, 1)
-                    I_mean = R.mean(axis = 0)
-                    I -= R.mean(axis = 0)
-                    R -= R.mean(axis = 0)
-                    Z, sv, N_modes = get_klip_basis(R = R, cutoff = mode_cut[rad_ind])
-                else: # following Amara et al. 2012
-                    I_mean = R.mean(axis = 0)
-                    I -= R.mean(axis = 0)
-                    R -= R.mean(axis = 0)
-                    #I_mean = I.mean()
-                    #I -= I_mean
-                    #R -= R.mean(axis=1).reshape(-1, 1)
-                    Z, sv, N_modes = get_pca_basis(R = R, cutoff = mode_cut[rad_ind])
-                #if fr_ind % diagnos_stride == 0:
-                #    print "Frame %d/%d, annulus %d/%d, sector %d/%d:" %\
-                #          (fr_ind+1, N_fr, rad_ind+1, N_rad, az_ind+1, N_az[rad_ind])
-                #    print "\tForming PSF estimate..."
-                Projmat = np.dot(Z.T, Z)
-                I_proj = np.dot(I, Projmat)
-                if disable_sub:
-                    F = I + I_mean
-                else:
-                    F = I - I_proj
+                if mode_cut[rad_ind] > 0: # do PCA on reference PSF stack
+                    if use_svd == False: # following Soummer et al. 2012
+                        I_mean = R.mean(axis = 0)
+                        I -= R.mean(axis = 0)
+                        R -= R.mean(axis = 0)
+                        Z, sv, N_modes = get_klip_basis(R = R, cutoff = mode_cut[rad_ind])
+                    else:
+                        I_mean = R.mean(axis = 0)
+                        I -= R.mean(axis = 0)
+                        R -= R.mean(axis = 0)
+                        Z, sv, N_modes = get_pca_basis(R = R, cutoff = mode_cut[rad_ind])
+                    #if fr_ind % diagnos_stride == 0:
+                    #    print "Frame %d/%d, annulus %d/%d, sector %d/%d:" %\
+                    #          (fr_ind+1, N_fr, rad_ind+1, N_rad, az_ind+1, N_az[rad_ind])
+                    #    print "\tForming PSF estimate..."
+                    Projmat = np.dot(Z.T, Z)
+                    I_proj = np.dot(I, Projmat)
+                    if disable_sub:
+                        F = I + I_mean
+                    else:
+                        F = I - I_proj
+                    klippsf_zone_img = reconst_zone(I_proj + I_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                else: # classical ADI: subtract mean refernce PSF
+                    R_mean = R.mean(axis = 0)
+                    F = I - R_mean
+                    klippsf_zone_img = reconst_zone(R_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                klippsf_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klippsf_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
                 klipsub_zone_img = reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                 klipsub_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klipsub_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
-                klippsf_zone_img = reconst_zone(I_proj + I_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
-                klippsf_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klippsf_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
 
-                if store_archv:
+                if store_archv and mode_cut[rad_ind] > 0:
+                    result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
+                    result_dict[fr_ind][rad_ind][az_ind]['F'] = F.astype(np.float32)
                     #result_dict[fr_ind][rad_ind][az_ind]['I'] = I
                     #result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
-                    result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
                     #result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv
                     #result_dict[fr_ind][rad_ind][az_ind]['Projmat'] = Projmat
                     #result_dict[fr_ind][rad_ind][az_ind]['I_proj'] = I_proj
-                    result_dict[fr_ind][rad_ind][az_ind]['F'] = F.astype(np.float32)
-                if fr_ind % diagnos_stride == 0:
+                if fr_ind % diagnos_stride == 0 and mode_cut[rad_ind] > 0:
                     klbasis_cube[:N_modes,:,:] += reconst_zone_cube(Z, zonemask_table_2d[fr_ind][rad_ind][az_ind],
                                                                     cube_dim = (N_modes, fr_shape[0], fr_shape[1]))
                     print "Frame %d, annulus %d/%d, sector %d/%d: RMS before/after sub: %0.2f / %0.2f" %\
@@ -148,7 +150,7 @@ class klipsub_task(object):
         #derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
         if fr_ind % diagnos_stride == 0:
             print "***** Frame %d has been PSF-sub'd and derotated. *****" % (fr_ind+1)
-            if store_klbasis == True:
+            if store_klbasis == True and klbasis_cube:
                 klbasis_cube_hdu = pyfits.PrimaryHDU(klbasis_cube.astype(np.float32))
                 klbasis_cube_hdu.writeto("%s/klbasis_fr%03d.fits" % (result_dir, fr_ind), clobber=True)
         return (fr_ind, klipsub_img, klippsf_img, derot_klipsub_img, result_dict)
@@ -337,7 +339,7 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, N_rad, R_inner, R_out,
     return ref_table, zonemask_table_1d, zonemask_table_2d
 
 def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_klbasis=False,
-                           disable_sub=False, klip_mode=True, mean_sub=True):
+                           disable_sub=False, use_svd=True, mean_sub=True):
     op_fr = config_dict['op_fr']
     fr_shape = config_dict['fr_shape']
     N_op_fr = len(op_fr)
@@ -355,7 +357,7 @@ def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_d
     # Enqueue the operand frames
     for fr_ind in op_fr:
         klipsub_tasks.put(klipsub_task(fr_ind, data_cube, config_dict, result_dict, result_dir,
-                                       diagnos_stride, store_klbasis, disable_sub, klip_mode))
+                                       diagnos_stride, store_klbasis, disable_sub, use_svd))
     # Kill each worker
     for p in xrange(N_proc):
         klipsub_tasks.put(None)
@@ -381,9 +383,9 @@ def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_d
     return klipsub_cube, klippsf_cube, derot_klipsub_cube
 
 def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_klbasis=False,
-                        disable_sub=False, klip_mode=True, mean_sub=True, proc_ind=None, result_queue=None):
+                        disable_sub=False, use_svd=True, mean_sub=True, proc_ind=None, result_queue=None):
 #def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_klbasis=False,
-#                        disable_sub=False, klip_mode=True, mean_sub=True, proc_ind=None, conn=None):
+#                        disable_sub=False, use_svd=True, mean_sub=True, proc_ind=None, conn=None):
     fr_shape = config_dict['fr_shape']
     parang_seq = config_dict['parang_seq']
     N_fr = len(parang_seq)
@@ -416,7 +418,7 @@ def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos
                 R = np.zeros((ref_table[fr_ind][rad_ind].shape[0], zonemask_table_1d[fr_ind][rad_ind][az_ind].shape[0]))
                 for j, ref_fr_ind in enumerate(ref_table[fr_ind][rad_ind]):
                     R[j,:] = np.ravel(data_cube[ref_fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy()
-                if klip_mode == True: # following Soummer et al. 2012
+                if use_svd == False: # following Soummer et al. 2012
                     if mean_sub == True:
                         #I_mean = np.mean(I)
                         #I -= I_mean
@@ -425,7 +427,7 @@ def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos
                         I -= R.mean(axis = 0)
                         R -= R.mean(axis = 0)
                     Z, sv, N_modes = get_klip_basis(R = R, cutoff = mode_cut[rad_ind])
-                else: # following Amara et al. 2012
+                else:
                     if mean_sub == True:
                         I_mean = R.mean(axis = 0)
                         I -= R.mean(axis = 0)
@@ -567,20 +569,27 @@ if __name__ == "__main__":
     #
     # Set PCA parameters
     #
-    klip_mode = False 
-    mean_sub = True
+    use_svd = True
     coadd_full_overlap_only = True
+    mean_sub = True
+    track_mode = False
+    #
+    # Set additional program parameters
+    #
+    store_results = True
+    store_archv = True
+    diagnos_stride = 50
+    N_proc = 10
     #
     # point PCA search zone config
     #
-    track_mode = False
-    mode_cut = [500]
+    mode_cut = [10]
     #mode_cut = [10]
     R_inner = 220.
     R_out = [260.]
     #R_inner = 110.
     #R_out = [130.]
-    DPhi = [90.]
+    DPhi = [50.]
     #DPhi = [50.]
     #R_out = [130.]
     #DPhi = [90.]
@@ -634,12 +643,6 @@ if __name__ == "__main__":
     assert(np.equal(N_fr, N_parang))
     print "The LMIRcam ADI sequence has been cropped to width %d pixels." % fr_width
     print "%d images with parallactic angle range %0.2f to %0.2f deg" % (N_fr, parang_seq[0], parang_seq[-1])
-    #
-    # Set additional program parameters
-    #
-    store_results = True
-    store_archv = True
-    diagnos_stride = 50
     op_fr = np.arange(N_fr)
     #op_fr = np.arange(0, N_fr, diagnos_stride)
     op_rad = range(N_rad)
@@ -664,14 +667,13 @@ if __name__ == "__main__":
                    'ref_table':ref_table, 'zonemask_table_1d':zonemask_table_1d,
                    'zonemask_table_2d':zonemask_table_2d}
     klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr)]
-    N_proc = 24
     print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
     klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                             result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
-                                                                            store_klbasis=False, klip_mode=klip_mode, mean_sub=mean_sub)
+                                                                            store_klbasis=False, use_svd=use_svd, mean_sub=mean_sub)
     #klipsub_cube, klippsf_cube, derot_klipsub_cube = do_klip_subtraction(data_cube=data_cube, config_dict=klip_config,
     #                                                                     result_dict=klip_data, result_dir=result_dir,
-    #                                                                     diagnos_stride=diagnos_stride, store_klbasis=False, klip_mode=klip_mode, mean_sub=mean_sub)
+    #                                                                     diagnos_stride=diagnos_stride, store_klbasis=False, use_svd=use_svd, mean_sub=mean_sub)
     #
     # Form mean and median of derotated residual images, and the mean and median of the PSF estimates.
     #
@@ -695,7 +697,7 @@ if __name__ == "__main__":
         # Store the results
         #
         delimiter = '-'
-        result_label = "%s_srcklip_rad%s_dphi%s_mode%s" % (dataset_label, delimiter.join(["%02d" % r for r in R_out]), delimiter.join(["%02d" % dp for dp in DPhi]), delimiter.join(["%02d" % m for m in mode_cut]))
+        result_label = "%s_srcklip_rad%s_dphi%s_mode%s" % (dataset_label, delimiter.join(["%02d" % r for r in R_out]), delimiter.join(["%02d" % dp for dp in DPhi]), delimiter.join(["%03d" % m for m in mode_cut]))
         klipsub_cube_fname = "%s/%s_res_cube.fits" % (result_dir, result_label)
         klippsf_cube_fname = "%s/%s_psf_cube.fits" % (result_dir, result_label)
         derot_klipsub_cube_fname = "%s/%s_derot_res_cube.fits" % (result_dir, result_label)

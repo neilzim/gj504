@@ -243,7 +243,9 @@ if __name__ == "__main__":
     klipmod_result_dir = '/disk1/zimmerman/GJ504/apr21_longL/klipmod_results'
     #klipsub_archv_fname = "%s/gj504_longL_sepcanon_rebin2x2_srcklip_rad130_dphi90_mode500_klipsub_archv.pkl" % klipsub_result_dir
     #synthpsf_fname = '%s/psf_model_rebin2x2.fits' % data_dir
-    klipsub_archv_fname =   "%s/gj504_longL_sepcanon_srcklip_rad260_dphi50_mode500_klipsub_archv.pkl" % klipsub_result_dir
+    #klipsub_archv_fname =   "%s/gj504_longL_sepcanon_srcklip_rad260_dphi50_mode500_klipsub_archv.pkl" % klipsub_result_dir
+    #klipsub_res_img_fname = '%s/gj504_longL_sepcanon_srcklip_rad260_dphi90_mode500_res_coadd.fits' % klipsub_result_dir
+    klipsub_archv_fname =   "%s/gj504_longL_sepcanon_srcklip_rad260_dphi50_mode010_klipsub_archv.pkl" % klipsub_result_dir
     klipsub_res_img_fname = '%s/gj504_longL_sepcanon_srcklip_rad260_dphi90_mode500_res_coadd.fits' % klipsub_result_dir
     synthpsf_fname = '%s/psf_model.fits' % data_dir
 
@@ -292,8 +294,8 @@ if __name__ == "__main__":
     synthpsf_img = synthpsf_hdulist[0].data
     synthpsf_hdulist.close()
     synthpsf_cent_xy = ((synthpsf_img.shape[0] - 1.)/2., (synthpsf_img.shape[1] - 1.)/2.)
-    #rolloff_rad = 40.
-    rolloff_rad = 80.
+    rolloff_rad = 40.
+    #rolloff_rad = 80.
     cropmarg = 1
     crop_synthpsf_img = synthpsf_img[cropmarg:-cropmarg, cropmarg:-cropmarg].copy()
     crop_synthpsf_cent_xy = ((crop_synthpsf_img.shape[0] - 1.)/2., (crop_synthpsf_img.shape[1] - 1.)/2.)
@@ -335,7 +337,7 @@ if __name__ == "__main__":
     #
     # Evaluate cost of guess model
     #
-    N_proc = 12
+    N_proc = 10
     start_time = time.time()
     #guess_cost = eval_adiklip_srcmodel(p = p0, op_fr = op_fr, adiklip_config = klip_config, adiklip_data = klip_data,\
     #                                   srcmodel = synthpsf_img, res_cube_fname=guess_res_cube_fname)

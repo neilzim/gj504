@@ -577,19 +577,19 @@ if __name__ == "__main__":
     # Set additional program parameters
     #
     store_results = True
-    store_archv = True
+    store_archv = False
     diagnos_stride = 50
     N_proc = 10
     #
     # point PCA search zone config
     #
-    mode_cut = [10]
+    mode_cut = [0]
     #mode_cut = [10]
     R_inner = 220.
     R_out = [260.]
     #R_inner = 110.
     #R_out = [130.]
-    DPhi = [50.]
+    DPhi = [90.]
     #DPhi = [50.]
     #R_out = [130.]
     #DPhi = [90.]
@@ -615,7 +615,9 @@ if __name__ == "__main__":
     #
     #dataset_label = 'gj504_longL_URnods'
     #dataset_label = 'gj504_longL_sepcanon_rebin2x2'
-    dataset_label = 'gj504_longL_sepcanon'
+    #dataset_label = 'gj504_longL_sepcanon'
+    #dataset_label = 'gj504_longL_octcanonTR'
+    dataset_label = 'gj504_longL_octcanonBL'
     #dataset_label = 'gj504_longL_nfrcomb50'
     data_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/reduc')
     result_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/klipsub_results')

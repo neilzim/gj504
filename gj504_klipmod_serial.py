@@ -145,6 +145,7 @@ def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, mode_cut, adikli
                                                        adiklip_data[fr_ind][rad_ind][az_ind]['Z'][:mode_cut,:], adiklip_data[fr_ind][rad_ind][az_ind]['F'],
                                                        srcmodel, amp, abframe_xy_seq[i]) )
         else:
+            print 'F.shape = ', adiklip_data[fr_ind][rad_ind][az_ind]['F'].shape
             eval_tasks.put( eval_adiklip_srcmodel_task(fr_ind, adiklip_config, adiklip_config['zonemask_table_1d'][fr_ind][rad_ind][az_ind],
                                                        None, adiklip_data[fr_ind][rad_ind][az_ind]['F'], srcmodel, amp, abframe_xy_seq[i]) )
             

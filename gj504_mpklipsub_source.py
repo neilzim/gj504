@@ -123,9 +123,10 @@ class klipsub_task(object):
                 klipsub_zone_img = reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                 klipsub_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klipsub_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
 
-                if store_archv and mode_cut[rad_ind] > 0:
-                    result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
+                if store_archv:
                     result_dict[fr_ind][rad_ind][az_ind]['F'] = F.astype(np.float32)
+                    if mode_cut[rad_ind] > 0:
+                        result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
                     #result_dict[fr_ind][rad_ind][az_ind]['I'] = I
                     #result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
                     #result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv

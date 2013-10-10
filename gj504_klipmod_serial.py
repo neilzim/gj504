@@ -55,9 +55,12 @@ class eval_adiklip_srcmodel_task(object):
         abframe_synthsrc_img = superpose_srcmodel(data_img = np.zeros(fr_shape), srcmodel_img = self.src_amp*self.srcmodel,
                                                   srcmodel_destxy = self.src_abframe_xy, srcmodel_centxy = srcmodel_cent_xy)
         Pmod = np.ravel(abframe_synthsrc_img)[ self.zonemask_1d ].copy()
-        Projmat = np.dot(self.Z.T, self.Z)
-        Pmod_proj = np.dot(Pmod, Projmat)
-        res_vec = self.F - Pmod + Pmod_proj
+        if self.Z:
+            Projmat = np.dot(self.Z.T, self.Z)
+            Pmod_proj = np.dot(Pmod, Projmat)
+            res_vec = self.F - Pmod + Pmod_proj
+        else:
+            res_vec = self.F - Pmod
         return (self.fr_ind, res_vec, np.sum(res_vec**2))
     def __str__(self):
         return 'frame %d' % (self.fr_ind+1)
@@ -116,7 +119,7 @@ def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, mode_cut, adikli
     if mode_cut == None:
         mode_cut = adiklip_config['mode_cut'][rad_ind]
     else:
-        assert mode_cut > 0 and mode_cut <= adiklip_config['mode_cut'][rad_ind]
+        assert mode_cut >= 0 and mode_cut <= adiklip_config['mode_cut'][rad_ind]
 
     fr_shape = adiklip_config['fr_shape']
     parang_seq = adiklip_config['parang_seq']
@@ -137,9 +140,14 @@ def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, mode_cut, adikli
         w.start()
     # Enqueue the operand frames
     for i, fr_ind in enumerate(op_fr):
-        eval_tasks.put( eval_adiklip_srcmodel_task(fr_ind, adiklip_config, adiklip_config['zonemask_table_1d'][fr_ind][rad_ind][az_ind],
-                                                   adiklip_data[fr_ind][rad_ind][az_ind]['Z'][:mode_cut,:], adiklip_data[fr_ind][rad_ind][az_ind]['F'],
-                                                   srcmodel, amp, abframe_xy_seq[i]) )
+        if mode_cut > 0:
+            eval_tasks.put( eval_adiklip_srcmodel_task(fr_ind, adiklip_config, adiklip_config['zonemask_table_1d'][fr_ind][rad_ind][az_ind],
+                                                       adiklip_data[fr_ind][rad_ind][az_ind]['Z'][:mode_cut,:], adiklip_data[fr_ind][rad_ind][az_ind]['F'],
+                                                       srcmodel, amp, abframe_xy_seq[i]) )
+        else:
+            eval_tasks.put( eval_adiklip_srcmodel_task(fr_ind, adiklip_config, adiklip_config['zonemask_table_1d'][fr_ind][rad_ind][az_ind],
+                                                       None, adiklip_data[fr_ind][rad_ind][az_ind]['F'], srcmodel, amp, abframe_xy_seq[i]) )
+            
     # Kill each worker
     for j in xrange(N_proc):
         eval_tasks.put(None)
@@ -323,7 +331,7 @@ def klipmod(ampguess, posguess_rho, posguess_theta, klipsub_archv_fname, klipsub
         #                                        approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=2)
         p_sol, final_cost, info = fmin_l_bfgs_b(func = mp_eval_adiklip_srcmodel, x0 = p0,
                                                 args = (N_proc, op_fr, None, None, mode_cut, klip_config, klip_data, crop_synthpsf_img),
-                                                approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=2)
+                                                approx_grad = True, bounds = p_bounds, factr=1e7, maxfun=100, disp=2)
         end_time = time.time()
         exec_time = end_time - start_time
 
@@ -356,7 +364,7 @@ if __name__ == "__main__":
     klipmod_result_dir = '%s/klipmod_results' % data_dir
     template_img_fname = '%s/gj504_longL_sepcanon_srcklip_rad260_dphi90_mode500_res_coadd.fits' % klipsub_result_dir
     synthpsf_fname = '%s/reduc/psf_model.fits' % data_dir
-    mode_cut = 10
+    mode_cut = 0
     N_proc = 10
     synthpsf_rolloff = 20.
 

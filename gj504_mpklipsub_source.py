@@ -123,10 +123,9 @@ class klipsub_task(object):
                 klipsub_zone_img = reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                 klipsub_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klipsub_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
 
-                if store_archv:
+                if store_archv and mode_cut[rad_ind] > 0:
+                    result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
                     result_dict[fr_ind][rad_ind][az_ind]['F'] = F.astype(np.float32)
-                    if mode_cut[rad_ind] > 0:
-                        result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
                     #result_dict[fr_ind][rad_ind][az_ind]['I'] = I
                     #result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
                     #result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv
@@ -578,7 +577,7 @@ if __name__ == "__main__":
     # Set additional program parameters
     #
     store_results = True
-    store_archv = False
+    store_archv = True
     diagnos_stride = 50
     N_proc = 10
     #
@@ -586,12 +585,14 @@ if __name__ == "__main__":
     #
     mode_cut = [0]
     #mode_cut = [10]
-    R_inner = 220.
-    R_out = [260.]
+    #R_inner = 220.
+    #R_out = [260.]
+    R_inner = 215.
+    R_out = [255.]
     #R_inner = 110.
     #R_out = [130.]
-    DPhi = [90.]
-    #DPhi = [50.]
+    #DPhi = [90.]
+    DPhi = [50.]
     #R_out = [130.]
     #DPhi = [90.]
     Phi_0 = [53.]
@@ -617,8 +618,9 @@ if __name__ == "__main__":
     #dataset_label = 'gj504_longL_URnods'
     #dataset_label = 'gj504_longL_sepcanon_rebin2x2'
     #dataset_label = 'gj504_longL_sepcanon'
+    dataset_label = 'gj504_longL_octcanon'
     #dataset_label = 'gj504_longL_octcanonTR'
-    dataset_label = 'gj504_longL_octcanonBL'
+    #dataset_label = 'gj504_longL_octcanonBL'
     #dataset_label = 'gj504_longL_nfrcomb50'
     data_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/reduc')
     result_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/klipsub_results')

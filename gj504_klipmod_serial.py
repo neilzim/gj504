@@ -145,7 +145,6 @@ def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, mode_cut, adikli
                                                        adiklip_data[fr_ind][rad_ind][az_ind]['Z'][:mode_cut,:], adiklip_data[fr_ind][rad_ind][az_ind]['F'],
                                                        srcmodel, amp, abframe_xy_seq[i]) )
         else:
-            print 'F.shape = ', adiklip_data[fr_ind][rad_ind][az_ind]['F'].shape
             eval_tasks.put( eval_adiklip_srcmodel_task(fr_ind, adiklip_config, adiklip_config['zonemask_table_1d'][fr_ind][rad_ind][az_ind],
                                                        None, adiklip_data[fr_ind][rad_ind][az_ind]['F'], srcmodel, amp, abframe_xy_seq[i]) )
             
@@ -161,7 +160,7 @@ def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, mode_cut, adikli
         fr_ind = result[0]
         i = np.where(op_fr == fr_ind)[0][0]
         res_vec = result[1]
-        cost = result[2]
+        cost = result[2]     
         total_sumofsq_cost += cost
         N_toget -= 1
     return total_sumofsq_cost
@@ -363,10 +362,10 @@ if __name__ == "__main__":
     data_dir = '/disk1/zimmerman/GJ504/apr21_longL'
     klipsub_result_dir = '%s/klipsub_results' % data_dir
     klipmod_result_dir = '%s/klipmod_results' % data_dir
-    template_img_fname = '%s/gj504_longL_sepcanon_srcklip_rad260_dphi90_mode500_res_coadd.fits' % klipsub_result_dir
+    template_img_fname = '%s/gj504_longL_octcanon_srcklip_rad255_dphi90_mode000_res_coadd.fits' % klipsub_result_dir
     synthpsf_fname = '%s/reduc/psf_model.fits' % data_dir
     mode_cut = 0
-    N_proc = 1
+    N_proc = 2
     synthpsf_rolloff = 20.
 
     # October canonical reduction; bottom left nod position only

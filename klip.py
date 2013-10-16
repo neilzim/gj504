@@ -434,15 +434,10 @@ def get_pca_basis(R, cutoff):
     return Vt[0:cutoff, :], sv, N_modes
 
 def get_klip_basis(R, cutoff):
-    #np.linalg.cholesky(np.dot(R, np.transpose(R)))
     w, V = np.linalg.eig(np.dot(R, np.transpose(R)))
     sort_ind = np.argsort(w)[::-1] #indices of eigenvals sorted in descending order
-    sv = np.sqrt(w[sort_ind]).reshape(-1,1) #column of ranked singular values
-    Z = np.dot(1./sv*np.transpose(V[:, sort_ind]), R)
-    #for i in range(w.shape[0]):
-    #    if w[i] < 0:
-    #        print "negative eigenval: w[%d] = %g" % (i, w[i])
-    #        #pdb.set_trace()
+    sv = np.sqrt(w[sort_ind][w[sort_ind] > 0]).reshape(-1,1) #column of ranked singular values
+    Z = np.dot(1./sv*np.transpose(V[:, sort_ind[w[sort_ind] > 0]]), R)
     N_modes = min([cutoff, Z.shape[0]])
     return Z[0:N_modes, :], sv, N_modes
 

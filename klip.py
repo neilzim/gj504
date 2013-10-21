@@ -777,7 +777,7 @@ def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut
         # Store the results
         #
         delimiter = '-'
-        result_label = "%s_globalklip_rad%s_mode%s" % (dataset_label, delimiter.join(["%02d" % r for r in R_out]), delimiter.join(["%03d" % m for m in mode_cut]))
+        result_label = "%s_globalklip_rad%03d-%03d_mode%03d-%03d" % (dataset_label, R_inner, R_out[-1], mode_cut[0], mode_cut[-1])
         klipsub_cube_fname = "%s/%s_res_cube.fits" % (result_dir, result_label)
         klippsf_cube_fname = "%s/%s_psf_cube.fits" % (result_dir, result_label)
         derot_klipsub_cube_fname = "%s/%s_derot_res_cube.fits" % (result_dir, result_label)

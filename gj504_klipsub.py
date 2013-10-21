@@ -16,9 +16,9 @@ import cPickle as pickle
 import matplotlib.pyplot as plt
 import matplotlib.colors
 
+#N_proc = 12 
+diagnos_stride = 50
 N_proc = 24
-#diagnos_stride = 100
-diagnos_stride = 24
 
 dataset_label = 'gj504_longL_octcanon'
 #dataset_label = 'gj504_longL_octcanonTR'
@@ -30,14 +30,18 @@ result_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/klipsub_resu
 #
 R_inner = 10.
 R_out = [20, 40, 80, 120, 170, 220, 260, 300]
-#R_out = [240, 280]#, 80, 140]# 200, 240, 280]
 mode_cut = [500]*8
-#DPhi = [360., 360., 360., 360.]#, 180., 90., 90.]
 DPhi = [360.]*8
 Phi_0 = [0.]*8
 fwhm = 4.
 min_refgap_fac = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1., 1.]
-#min_refgap_fac = [0.5]*7
+#R_inner = 220
+#R_out = [260, 300]
+#mode_cut = [500]*2
+#DPhi = [360.]*2
+#Phi_0 = [0.]*2
+#fwhm = 4.
+#min_refgap_fac = [0.5]*2
 
 test_mode = False
 store_results = True

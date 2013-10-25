@@ -7,16 +7,19 @@ Library of routines for PSF subtraction by principal component analysis
 import numpy as np
 import time as time
 import pyfits
+import warnings
 from scipy.ndimage.interpolation import *
 from scipy.interpolate import *
 from scipy.optimize import *
 from scipy.stats import nanmean, nanmedian
 from scipy.io.idl import readsav
+from shutil import copyfile
 import multiprocessing
 import sys
 import os
 import pdb
 import cPickle as pickle
+import matplotlib.pyplot as plt
 
 class Worker(multiprocessing.Process):
     def __init__(self, task_queue, result_queue):
@@ -128,7 +131,7 @@ class klipsub_task(object):
         else:
             klippsf_img = None
 
-        if fr_ind%diagnos_stride == 0:
+        if diagnos_stride > 0 and fr_ind%diagnos_stride == 0:
             if max(mode_cut) > 0:
                 klbasis_cube = np.zeros((max(mode_cut), fr_shape[0], fr_shape[1]))
             else:
@@ -181,7 +184,7 @@ class klipsub_task(object):
                     #result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
                     #result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv
                     #result_dict[fr_ind][rad_ind][az_ind]['I_proj'] = I_proj
-                if fr_ind % diagnos_stride == 0 and mode_cut[rad_ind] > 0:
+                if diagnos_stride > 0 and fr_ind % diagnos_stride == 0 and mode_cut[rad_ind] > 0:
                     #klbasis_cube[:N_modes,:,:] += reconst_zone_cube(Z, zonemask_table_2d[fr_ind][rad_ind][az_ind],
                     #                                                cube_dim = (N_modes, fr_shape[0], fr_shape[1]))
                     klbasis_cube[:N_modes,:,:] += reconst_zone_cube(Z, zonemask_2d[rad_ind][az_ind],
@@ -198,7 +201,7 @@ class klipsub_task(object):
         derot_klipsub_img[exc_ind] = np.nan
 
         #derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
-        if fr_ind % diagnos_stride == 0:
+        if diagnos_stride > 0 and fr_ind % diagnos_stride == 0:
             print "***** Frame %d has been PSF-sub'd and derotated. *****" % (fr_ind+1)
             if store_klbasis == True and klbasis_cube:
                 klbasis_cube_hdu = pyfits.PrimaryHDU(klbasis_cube.astype(np.float32))
@@ -206,6 +209,158 @@ class klipsub_task(object):
         return (fr_ind, klipsub_img, derot_klipsub_img, klippsf_img, result_dict)
     def __str__(self):
         return 'frame %d' % (self.fr_ind+1)
+
+def crop_and_rolloff_psf(psf_fname, rolloff_rad = None, cropmarg = 1):
+    psf_hdulist = pyfits.open(psf_fname)
+    psf_img = psf_hdulist[0].data
+    psf_hdulist.close()
+    psf_cent_xy = ((psf_img.shape[0] - 1.)/2., (psf_img.shape[1] - 1.)/2.)
+    crop_psf_img = psf_img[cropmarg:-cropmarg, cropmarg:-cropmarg].copy()
+    if rolloff_rad != None:
+        crop_psf_cent_xy = ((crop_psf_img.shape[0] - 1.)/2., (crop_psf_img.shape[1] - 1.)/2.)
+        Y, X = np.indices(crop_psf_img.shape)
+        Rsqrd = (X - crop_psf_cent_xy[0])**2 + (Y - crop_psf_cent_xy[1])**2
+        crop_psf_img *= np.exp( -(Rsqrd / rolloff_rad**2)**2 )
+    return crop_psf_img
+
+def add_fake_planets(data_cube, parang_seq, psf_img, R_p, PA_p, flux_p):
+    fr_width = data_cube.shape[1]
+    data_cent_xy = ((fr_width - 1)/2., (fr_width - 1)/2.)
+    psf_width = psf_img.shape[0]
+    psf_cent_xy = ((psf_width - 1)/2., (psf_width - 1)/2.)
+    N_fr = len(parang_seq)
+    psf_peak = np.max(psf_img)
+    amp_p = flux_p/psf_peak
+    fakep_data_cube = data_cube.copy()
+    for R, PA, amp in zip(R_p, PA_p, amp_p):
+        rot_PA_seq = np.deg2rad([PA - parang for parang in parang_seq])
+        rot_xy_seq = [( data_cent_xy[0] + R*np.cos(np.pi/2 + rot_PA),
+                        data_cent_xy[1] + R*np.sin(np.pi/2 + rot_PA) ) for rot_PA in rot_PA_seq]
+        for i in range(N_fr):
+            fakep_data_cube[i,:,:] = superpose_srcmodel(data_img=fakep_data_cube[i,:,:], srcmodel_img=amp*psf_img,
+                                                        srcmodel_destxy = rot_xy_seq[i], srcmodel_centxy = psf_cent_xy)
+    return fakep_data_cube
+
+def get_residual_fake_planet_stats(config_dict, Phi_0, R_p, PA_p, flux_p, fwhm, planet_coadd_img, planet_med_img,
+                                   true_coadd_img=None, true_med_img=None, xycent=None, log_fobj=sys.stdout):
+    fr_shape = config_dict['fr_shape']
+    parang_seq = config_dict['parang_seq']
+    op_rad = config_dict['op_rad']
+    op_az = config_dict['op_az']
+    if xycent == None:
+        xycent = ((fr_shape[0] - 1)/2., (fr_shape[1] - 1)/2.)
+    R_inner = config_dict['R_inner']
+    R_out = config_dict['R_out']
+    rad_vec = np.sqrt(get_radius_sqrd(fr_shape, xycent)).ravel()
+
+    Phi_0_derot = (Phi_0 + parang_seq[0]) % 360.
+    coadd_annular_rms = list()
+    med_annular_rms = list()
+    log_fobj.write("RMS counts in KLIP results:\n")
+    for rad_ind in op_rad:
+        R2 = R_out[rad_ind]
+        if rad_ind == 0:
+            R1 = R_inner
+        else:
+            R1 = R_out[rad_ind-1]
+        annular_mask_logic = np.vstack([np.less_equal(rad_vec, R2),\
+                                        np.greater(rad_vec, R1),\
+                                        np.isfinite(true_coadd_img.ravel())])
+        annular_mask = np.nonzero( np.all(annular_mask_logic, axis=0) )[0]
+        if true_coadd_img == None:
+            coadd_annular_rms.append( np.sqrt( np.mean( np.ravel(planet_coadd_img.copy())[annular_mask]**2 ) ) )
+            med_annular_rms.append( np.sqrt( np.mean( np.ravel(planet_med_img.copy())[annular_mask]**2 ) ) )
+        else:
+            coadd_annular_rms.append( np.sqrt( np.mean( np.ravel(true_coadd_img.copy())[annular_mask]**2 ) ) )
+            med_annular_rms.append( np.sqrt( np.mean( np.ravel(true_med_img.copy())[annular_mask]**2 ) ) )
+        log_fobj.write("\tannulus %d/%d: %.2f in KLIP sub'd, derotated, coadded annlus\n" % (rad_ind+1, len(op_rad), coadd_annular_rms[-1]))
+        log_fobj.write("\tannulus %d/%d: %.2f in KLIP sub'd, derotated, median annlus\n" % (rad_ind+1, len(op_rad), med_annular_rms[-1]))
+    for i, rad_ind in enumerate(op_rad):
+        R2 = R_out[rad_ind]
+        if rad_ind == 0:
+            R1 = R_inner
+        else:
+            R1 = R_out[rad_ind-1]
+        if R1 < R_p and R_p < R2:
+            xy_p = (xycent[0] + R_p*np.cos(np.pi/2 + np.deg2rad(PA_p)), xycent[0] + R_p*np.sin(np.pi/2 + np.deg2rad(PA_p)))
+            round_xy_p = (round(xy_p[0]), round(xy_p[1]))
+            log_fobj.write("Measuring fake planet signal at location %d, %d in residual image\n" % (round_xy_p[0], round_xy_p[1]))
+            coadd_planet_box = planet_coadd_img[round_xy_p[1] - fwhm:round_xy_p[1] + fwhm,
+                                                round_xy_p[0] - fwhm:round_xy_p[0] + fwhm]
+            coadd_planet_peak = np.nanmax(coadd_planet_box)
+            coadd_planet_snr = coadd_planet_peak / coadd_annular_rms[i]
+            coadd_planet_thrupt = coadd_planet_peak / flux_p
+            coadd_min_detect = 5 * coadd_annular_rms[i] / coadd_planet_thrupt
+            med_planet_box = planet_med_img[round_xy_p[1] - fwhm:round_xy_p[1] + fwhm,
+                                            round_xy_p[0] - fwhm:round_xy_p[0] + fwhm]
+            med_planet_peak = np.nanmax(med_planet_box)
+            med_planet_snr = med_planet_peak / med_annular_rms[i]
+            med_planet_thrupt = med_planet_peak / flux_p
+            med_min_detect = 5 * med_annular_rms[i] / med_planet_thrupt
+            
+            log_fobj.write("Peak planet pixel value in final co-added planet image: %0.2f => SNR = %0.2f, throughput = %0.2f, min. detect. input flux = %0.2f\n" % \
+                              (coadd_planet_peak, coadd_planet_snr, coadd_planet_thrupt, coadd_min_detect))
+            log_fobj.write("Peak planet pixel value in median of de-rotated planet images: %0.2f => SNR = %0.2f, throughput = %0.2f, min. detect. input flux = %0.2f\n" % \
+                              (med_planet_peak, med_planet_snr, med_planet_thrupt, med_min_detect))
+    return coadd_annular_rms, coadd_min_detect, med_annular_rms, med_min_detect
+
+def get_residual_stats(config_dict, Phi_0, coadd_img, med_img, xycent=None, log_fobj=sys.stdout):
+    fr_shape = config_dict['fr_shape']
+    parang_seq = config_dict['parang_seq']
+    op_rad = config_dict['op_rad']
+    op_az = config_dict['op_az']
+    if xycent == None:
+        xycent = ((fr_shape[0] - 1)/2., (fr_shape[0] - 1)/2.)
+    rad_vec = np.sqrt(get_radius_sqrd(fr_shape, xycent)).ravel()
+    R_inner = config_dict['R_inner']
+    R_out = config_dict['R_out']
+    N_az = config_dict['N_az']
+    
+    Phi_0_derot = (Phi_0 + parang_seq[0]) % 360.
+    coadd_annular_rms = list()
+    zonal_rms = [[None]*N_az[r] for r in range(len(R_out))]
+    log_fobj.write("RMS counts in KLIP results:\n")
+    for rad_ind in op_rad:
+        R2 = R_out[rad_ind]
+        if rad_ind == 0:
+            R1 = R_inner
+        else:
+            R1 = R_out[rad_ind-1]
+        annular_mask_logic = np.vstack([np.less_equal(rad_vec, R2),\
+                                        np.greater(rad_vec, R1),\
+                                        np.isfinite(coadd_img.ravel())])
+        annular_mask = np.nonzero( np.all(annular_mask_logic, axis=0) )[0]
+        coadd_annular_rms.append( np.sqrt( np.mean( np.ravel(coadd_img)[annular_mask]**2 ) ) )
+        log_fobj.write("\tannulus %d/%d: %.3f in KLIP sub'd, derotated, coadded annlus\n" % (rad_ind+1, len(op_rad), coadd_annular_rms[-1]))
+        if len(op_az[rad_ind]) > 1:
+            Phi_beg = (Phi_0_derot - DPhi[rad_ind]/2.) % 360.
+            Phi_end = [ (Phi_beg + i * DPhi[rad_ind]) % 360. for i in range(1, len(op_az[rad_ind])) ]
+            Phi_end.append(Phi_beg)
+            for az_ind in op_az[rad_ind]:
+                Phi2 = Phi_end[az_ind]
+                if az_ind == 0:
+                    Phi1 = Phi_beg
+                else:
+                    Phi1 = Phi_end[az_ind-1]
+                if Phi1 < Phi2:
+                    mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
+                                            np.greater(rad_vec, R1),\
+                                            np.less_equal(angle_vec, Phi2),\
+                                            np.greater(angle_vec, Phi1)))
+                else: # azimuthal region spans phi = 0
+                    rad_mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
+                                                np.greater(rad_vec, R1)))
+                    az_mask_logic = np.vstack((np.less_equal(angle_vec, Phi2),\
+                                               np.greater(angle_vec, Phi1)))
+                    mask_logic = np.vstack((np.any(az_mask_logic, axis=0),\
+                                            np.all(rad_mask_logic, axis=0)))
+                derot_zonemask = np.nonzero( np.all(mask_logic, axis = 0) )[0]
+                zonal_rms[rad_ind][az_ind] = np.sqrt( np.mean( np.ravel(coadd_img)[derot_zonemask]**2 ) )
+            delimiter = ', '
+            log_fobj.write("\tby zone: %s\n" % delimiter.join(["%.3f" % zonal_rms[rad_ind][a] for a in op_az[rad_ind]]))
+    log_fobj.write("Peak, min values in final co-added image: %0.3f, %0.3f\n" % (np.nanmax(coadd_img), np.nanmin(coadd_img)))
+    log_fobj.write("Peak, min values in median of de-rotated images: %0.3f, %0.3f\n" % (np.nanmax(med_img), np.nanmin(med_img)))
+    return coadd_annular_rms, zonal_rms
 
 def superpose_srcmodel(data_img, srcmodel_img, srcmodel_destxy, srcmodel_centxy = None, rolloff_rad = None):
     assert(len(data_img.shape) == 2)
@@ -243,10 +398,10 @@ def superpose_srcmodel(data_img, srcmodel_img, srcmodel_destxy, srcmodel_centxy 
                                  BLcropyx[1]:srcmodel_img.shape[1]-TRcropyx[1]]
     return super_img 
 
-def get_radius_sqrd(s, c=None):
+def get_radius_sqrd(shape, c=None):
     if c is None:
-        c = (0.5*float(s[0] - 1),  0.5*float(s[1] - 1))
-    y, x = np.indices(s)
+        c = (0.5*float(shape[0] - 1),  0.5*float(shape[1] - 1))
+    y, x = np.indices(shape)
     rsqrd = (x - c[0])**2 + (y - c[1])**2
     return rsqrd
 
@@ -282,7 +437,7 @@ def reconst_zone(data_vec, pix_table, img_dim):
 def load_leech_adiseq(fname_root, N_fr, old_xycent, outer_search_rad):
     cropped_cube = np.zeros((N_fr, 2*outer_search_rad, 2*outer_search_rad))
     subpix_xyoffset = np.array( [0.5 - old_xycent[0]%1., 0.5 - old_xycent[1]%1.] )
-    print 'load_leech_adiseq: subpix_xyoffset = %0.2f, %0.2f' % (subpix_xyoffset[0], subpix_xyoffset[1])
+    #print 'load_leech_adiseq: subpix_xyoffset = %0.2f, %0.2f' % (subpix_xyoffset[0], subpix_xyoffset[1])
     shifted_xycent = ( old_xycent[0] + subpix_xyoffset[0], old_xycent[1] + subpix_xyoffset[1] )
 
     for i in range(N_fr):
@@ -306,11 +461,11 @@ def load_adi_master_cube(datacube_fname, outer_search_rad, old_xycent=None, true
             old_xycent = (old_width/2, old_width/2)
     subpix_xyoffset = np.array( [0.5 - old_xycent[0]%1., 0.5 - old_xycent[1]%1.] )
     if subpix_xyoffset[0] > np.finfo(np.float64).eps or subpix_xyoffset[1] > np.finfo(np.float64).eps:
-        print 'load_adi_master_cube: subpix_xyoffset = %0.2f, %0.2f' % (subpix_xyoffset[0], subpix_xyoffset[1])
+        #print 'load_adi_master_cube: subpix_xyoffset = %0.2f, %0.2f' % (subpix_xyoffset[0], subpix_xyoffset[1])
         shifted_xycent = ( old_xycent[0] + subpix_xyoffset[0], old_xycent[1] + subpix_xyoffset[1] )
         shifted_cube = shift(input = cube_hdulist[0].data, shift = [0, subpix_xyoffset[1], subpix_xyoffset[0]], order=3)
     else:
-        print 'load_adi_master_cube: No sub-pixel offset applied.'
+        #print 'load_adi_master_cube: No sub-pixel offset applied.'
         shifted_cube = cube_hdulist[0].data
         shifted_xycent = old_xycent
     cube_hdulist.close()
@@ -332,14 +487,15 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
     #
     # Determine table of references for each frame, and form search zone pixel masks (1-D and 2-D formats).
     #
-    print "Search zone scheme:"
-    if track_mode:
-        print "\tTrack mode ON"
-    else:
-        print "\tTrack mode OFF"
-    print "\tR_inner:", R_inner, "; R_out:", R_out
-    print "\tPhi_0, DPhi, N_az:", Phi_0, DPhi, N_az
-    print "\tmode_cut:", mode_cut
+    if diagnos_stride > 0:
+        print "Search zone scheme:"
+        if track_mode:
+            print "\tTrack mode ON"
+        else:
+            print "\tTrack mode OFF"
+        print "\tR_inner:", R_inner, "; R_out:", R_out
+        print "\tPhi_0, DPhi, N_az:", Phi_0, DPhi, N_az
+        print "\tmode_cut:", mode_cut
     for rad_ind in op_rad:
         R2 = R_out[rad_ind]
         if rad_ind == 0:
@@ -350,8 +506,8 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
             min_refang = DPhi[rad_ind]/2.
         else:
             min_refang = np.arctan(min_refgap_fac[rad_ind]*fwhm/((R1 + R2)/2))*180/np.pi
-        print "\trad_ind = %d: min_refang = %0.2f deg" % (rad_ind, min_refang)
-    print ""
+        if diagnos_stride > 0: print "\trad_ind = %d: min_refang = %0.2f deg" % (rad_ind, min_refang)
+    if diagnos_stride > 0: print ""
 
     if xycent == None:
         xycent = ((fr_shape[0] - 1)/2., (fr_shape[0] - 1)/2.)
@@ -404,7 +560,7 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
                 zonemask_2d = np.nonzero( np.all(mask_logic, axis = 0).reshape(fr_shape) )
                 zonemask_table_1d[fr_ind][rad_ind][az_ind] = zonemask_1d
                 zonemask_table_2d[fr_ind][rad_ind][az_ind] = zonemask_2d
-                if fr_ind == op_fr[0]:
+                if fr_ind == op_fr[0] and diagnos_stride > 0:
                     print 'Search zone size for rad ind %d, az_ind %d is %d pixels' % (rad_ind, az_ind, zonemask_1d.shape[0])
                     if rad_ind == N_rad-1 and az_ind == N_az[rad_ind]-1:
                         print ""
@@ -413,19 +569,19 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
                           (fr_ind, rad_ind, az_ind, zonemask_1d.shape[0], len(ref_table[fr_ind][rad_ind]))
                     print "This has previously resulted in unexpected behavior, namely a reference covariance matrix that is not positive definite."
         for rad_ind in op_rad:
-            if fr_ind%diagnos_stride == 0:
+            if diagnos_stride > 0 and fr_ind%diagnos_stride == 0:
                 print "Frame %d/%d, annulus %d/%d: %d valid reference frames." %\
                       (fr_ind+1, N_fr, rad_ind+1, N_rad, len(ref_table[fr_ind][rad_ind]))
             if len(ref_table[fr_ind][rad_ind]) < 1:
                 print "Zero valid reference frames for fr_ind = %d, rad_ind = %d." % (fr_ind, rad_ind)
                 print "The par ang of this frame is %0.2f deg; min_refang = %0.2f deg. Forced to exit." % (parang_seq[fr_ind], min_refang)
                 sys.exit(-1)
-    print ""
+    if diagnos_stride > 0: print ""
     for rad_ind in op_rad:
         num_ref = [len(ref_table[f][rad_ind]) for f in op_fr]
-        print "annulus %d/%d: min, median, max number of ref frames = %d, %d, %d" %\
+        if diagnos_stride > 0: print "annulus %d/%d: min, median, max number of ref frames = %d, %d, %d" %\
               ( rad_ind+1, N_rad, min(num_ref), np.median(num_ref), max(num_ref) )
-    print ""
+    if diagnos_stride > 0: print ""
     return ref_table, zonemask_table_1d, zonemask_table_2d
 
 def get_pca_basis(R, cutoff):
@@ -441,66 +597,8 @@ def get_klip_basis(R, cutoff):
     N_modes = min([cutoff, Z.shape[0]])
     return Z[0:N_modes, :], sv, N_modes
 
-def get_residual_stats(config_dict, Phi_0, coadd_img, med_img, xycent=None):
-    fr_shape = config_dict['fr_shape']
-    parang_seq = config_dict['parang_seq']
-    op_rad = config_dict['op_rad']
-    op_az = config_dict['op_az']
-    if xycent == None:
-        xycent = ((fr_shape[0] - 1)/2., (fr_shape[0] - 1)/2.)
-    rad_vec = np.sqrt(get_radius_sqrd(fr_shape, xycent)).ravel()
-    R_inner = config_dict['R_inner']
-    R_out = config_dict['R_out']
-    N_az = config_dict['N_az']
-    
-    Phi_0_derot = (Phi_0 + parang_seq[0]) % 360.
-    coadd_annular_rms = list()
-    zonal_rms = [[None]*N_az[r] for r in range(len(R_out))]
-    print "RMS counts in KLIP results:"
-    for rad_ind in op_rad:
-        R2 = R_out[rad_ind]
-        if rad_ind == 0:
-            R1 = R_inner
-        else:
-            R1 = R_out[rad_ind-1]
-        annular_mask_logic = np.vstack([np.less_equal(rad_vec, R2),\
-                                        np.greater(rad_vec, R1),\
-                                        np.isfinite(coadd_img.ravel())])
-        annular_mask = np.nonzero( np.all(annular_mask_logic, axis=0) )[0]
-        coadd_annular_rms.append( np.sqrt( np.mean( np.ravel(coadd_img)[annular_mask]**2 ) ) )
-        print "\tannulus %d/%d: %.3f in KLIP sub'd, derotated, coadded annlus" % (rad_ind+1, len(op_rad), coadd_annular_rms[-1])
-        if len(op_az[rad_ind]) > 1:
-            Phi_beg = (Phi_0_derot - DPhi[rad_ind]/2.) % 360.
-            Phi_end = [ (Phi_beg + i * DPhi[rad_ind]) % 360. for i in range(1, len(op_az[rad_ind])) ]
-            Phi_end.append(Phi_beg)
-            for az_ind in op_az[rad_ind]:
-                Phi2 = Phi_end[az_ind]
-                if az_ind == 0:
-                    Phi1 = Phi_beg
-                else:
-                    Phi1 = Phi_end[az_ind-1]
-                if Phi1 < Phi2:
-                    mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
-                                            np.greater(rad_vec, R1),\
-                                            np.less_equal(angle_vec, Phi2),\
-                                            np.greater(angle_vec, Phi1)))
-                else: # azimuthal region spans phi = 0
-                    rad_mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
-                                                np.greater(rad_vec, R1)))
-                    az_mask_logic = np.vstack((np.less_equal(angle_vec, Phi2),\
-                                               np.greater(angle_vec, Phi1)))
-                    mask_logic = np.vstack((np.any(az_mask_logic, axis=0),\
-                                            np.all(rad_mask_logic, axis=0)))
-                derot_zonemask = np.nonzero( np.all(mask_logic, axis = 0) )[0]
-                zonal_rms[rad_ind][az_ind] = np.sqrt( np.mean( np.ravel(coadd_img)[derot_zonemask]**2 ) )
-            delimiter = ', '
-            print "\tby zone: %s" % delimiter.join(["%.3f" % zonal_rms[rad_ind][a] for a in op_az[rad_ind]])
-    print "Peak, min values in final co-added image: %0.3f, %0.3f" % (np.nanmax(coadd_img), np.nanmin(coadd_img))
-    print "Peak, min values in median of de-rotated images: %0.3f, %0.3f" % (np.nanmax(med_img), np.nanmin(med_img))
-    return coadd_annular_rms, zonal_rms
-
-def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_psf=False,
-                           store_archv=False, store_klbasis=False, disable_sub=False, use_svd=True):
+def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_dir, diagnos_stride=50, store_psf=False,
+                           store_archv=False, store_klbasis=False, disable_sub=False, use_svd=True, log_fobj=sys.stdout):
     op_fr = config_dict['op_fr']
     fr_shape = config_dict['fr_shape']
     N_op_fr = len(op_fr)
@@ -548,8 +646,9 @@ def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_d
     end_time = time.time()
     exec_time = end_time - start_time
     time_per_frame = exec_time/N_op_fr
-    print "Took %dm%02ds to KLIP-subtract %d frames (%0.2f s per frame).\n" %\
-          (int(exec_time/60.), exec_time - 60*int(exec_time/60.), N_op_fr, time_per_frame)
+    log_fobj.write("Took %dm%02ds to KLIP-subtract %d frames (%0.2f s per frame).\n" %\
+          (int(exec_time/60.), exec_time - 60*int(exec_time/60.), N_op_fr, time_per_frame))
+    if diagnos_stride > 0: log_fobj.write("\n")
     return klipsub_cube, klippsf_cube, derot_klipsub_cube
 
 def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, rad_ind, az_ind, mode_cut, adiklip_config, adiklip_data, srcmodel):
@@ -678,10 +777,11 @@ def eval_adiklip_srcmodel(p, op_fr, adiklip_config, adiklip_data, srcmodel, cost
         res_cube_hdulist.close()
     return sumofsq_cost
 
-def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut, DPhi, Phi_0,
-                   fwhm, min_refgap_fac, op_fr=None, N_proc=1, diagnos_stride=50, test_mode=False,
-                   use_svd=True, coadd_full_overlap_only=True, store_results=True, store_psf=False,
-                   store_archv=False, store_klbasis=False, track_mode=False):
+def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut, DPhi, Phi_0,
+                  fwhm, min_refgap_fac, op_fr=None, N_proc=1, diagnos_stride=50, fake_planet=None,
+                  synth_psf_img=None, test_mode=False, use_svd=True, coadd_full_overlap_only=True,
+                  store_results=True, store_psf=False, store_archv=False, store_klbasis=False,
+                  track_mode=False, log_fobj=sys.stdout):
     #
     # Load the data
     #
@@ -690,17 +790,22 @@ def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut
     cube_fname = '%s/%s_cube.fits' % (data_dir, dataset_label)
     cropped_cube_fname = '%s/%s_cropped_cube.fits' % (data_dir, dataset_label)
     if os.path.exists(cropped_cube_fname):
-        print "Loading existing centered, cropped data cube %s..." % cropped_cube_fname
+        if diagnos_stride > 0:
+            print "Loading existing centered, cropped data cube %s..." % cropped_cube_fname
         cube_hdulist = pyfits.open(cropped_cube_fname, 'readonly')
         data_cube = cube_hdulist[0].data
         cube_hdulist.close()
         if data_cube.shape[1] != 2*R_out[-1]:
-            print "Loading, centering, and cropping master ADI data cube %s..." % cube_fname
+            if diagnos_stride > 0:
+                print "Loading, centering, and cropping master ADI data cube %s..." % cube_fname
             data_cube = load_adi_master_cube(cube_fname, R_out[-1], true_center=True)
             data_cube_hdu = pyfits.PrimaryHDU(data_cube.astype(np.float32))
-            data_cube_hdu.writeto('%s/%s_cropped_cube.fits' % (data_dir, dataset_label), clobber=True)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                data_cube_hdu.writeto('%s/%s_cropped_cube.fits' % (data_dir, dataset_label), clobber=True)
     else:
-        print "Loading, centering, and cropping master ADI data cube %s..." % cube_fname
+        if diagnos_stride > 0:
+            print "Loading, centering, and cropping master ADI data cube %s..." % cube_fname
         data_cube = load_adi_master_cube(cube_fname, R_out[-1], true_center=True)
         data_cube_hdu = pyfits.PrimaryHDU(data_cube.astype(np.float32))
         data_cube_hdu.writeto('%s/%s_cropped_cube.fits' % (data_dir, dataset_label))
@@ -711,14 +816,18 @@ def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut
     fr_width = fr_shape[1]
     N_parang = parang_seq.shape[0]
     assert(np.equal(N_fr, N_parang))
-    print "The LMIRcam ADI sequence has been cropped to width %d pixels." % fr_width
-    print "%d images with parallactic angle range %0.2f to %0.2f deg" % (N_fr, parang_seq[0], parang_seq[-1])
+    if diagnos_stride > 0:
+        print "The LMIRcam ADI sequence has been cropped to width %d pixels." % fr_width
+        print "%d images with parallactic angle range %0.2f to %0.2f deg" % (N_fr, parang_seq[0], parang_seq[-1])
     #
     # Complete the geometric configuration.
     #
     if op_fr == None:
         if test_mode:
-            op_fr = np.arange(0, N_fr, diagnos_stride)
+            if diagnos_stride > 0:
+                op_fr = np.arange(0, N_fr, diagnos_stride)
+            else:
+                op_fr = np.arange(0, N_fr, 50)
         else:
             op_fr = np.arange(N_fr)
     N_rad = len(R_out)
@@ -749,11 +858,22 @@ def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut
         klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr)]
     else:
         klip_data = None
-    print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
+    if diagnos_stride > 0:
+        print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
     klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                             result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
                                                                             store_psf=store_psf, store_archv=store_archv, store_klbasis=store_klbasis,
-                                                                            use_svd=use_svd)
+                                                                            use_svd=use_svd, log_fobj=log_fobj)
+    if fake_planet != None:
+        R_fakep = fake_planet[0]
+        PA_fakep = fake_planet[1]
+        flux_fakep = fake_planet[2]
+        fakep_data_cube = add_fake_planets(data_cube, parang_seq, psf_img=synth_psf_img, R_p=[R_fakep], PA_p=[PA_fakep], flux_p=[flux_fakep])
+        fakep_klipsub_cube, fakep_klippsf_cube, fakep_derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=fakep_data_cube, config_dict=klip_config,
+                                                                                                  result_dict=klip_data, result_dir=result_dir,
+                                                                                                  diagnos_stride=diagnos_stride, store_psf=store_psf,
+                                                                                                  store_archv=store_archv, store_klbasis=store_klbasis,
+                                                                                                  use_svd=use_svd, log_fobj=log_fobj)
     #
     # Form mean and median of derotated residual images, and the mean and median of the PSF estimates.
     #
@@ -768,16 +888,39 @@ def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut
         coadd_img[exclude_ind] = np.nan
         med_img[exclude_ind] = np.nan
     coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
+    if fake_planet != None:
+        fakep_coadd_img = nanmean(fakep_derot_klipsub_cube, axis=0)
+        fakep_med_img = nanmedian(fakep_derot_klipsub_cube, axis=0)
+        if coadd_full_overlap_only:
+            fakep_coadd_img[exclude_ind] = np.nan
+            fakep_med_img[exclude_ind] = np.nan
     #
     # Get statistics from co-added and median residual images
     #
-    annular_rms, zonal_rms = get_residual_stats(config_dict=klip_config, Phi_0=Phi_0, coadd_img=coadd_img, med_img=med_img)
+    if fake_planet != None:
+        #plt.figure(figsize=(12,6))
+        #plt.subplot(1,3,1)
+        #plt.imshow(coadd_img, origin='lower', interpolation='nearest')
+        #plt.colorbar(orientation='vertical', shrink=0.5)
+        #plt.subplot(1,3,2)
+        #plt.imshow(fakep_coadd_img, origin='lower', interpolation='nearest')
+        #plt.colorbar(orientation='vertical', shrink=0.5)
+        #plt.subplot(1,3,3)
+        #plt.imshow(fakep_coadd_img - coadd_img, origin='lower', interpolation='nearest')
+        #plt.colorbar(orientation='vertical', shrink=0.5)
+        #plt.show()
+        coadd_rms, coadd_min_detect, med_rms, med_min_detect = get_residual_fake_planet_stats(config_dict=klip_config, Phi_0=Phi_0, R_p=R_fakep, PA_p=PA_fakep,
+                                                                                              flux_p = flux_fakep, fwhm=int(round(fwhm)),
+                                                                                              planet_coadd_img=fakep_coadd_img, planet_med_img=fakep_med_img,
+                                                                                              true_coadd_img=coadd_img, true_med_img=med_img, log_fobj=log_fobj)
+    else:
+        annular_rms, zonal_rms = get_residual_stats(config_dict=klip_config, Phi_0=Phi_0, coadd_img=coadd_img, med_img=med_img)
     if store_results == True:
         #
         # Store the results
         #
         delimiter = '-'
-        result_label = "%s_globalklip_rad%s_mode%s" % (dataset_label, delimiter.join(["%02d" % r for r in R_out]), delimiter.join(["%03d" % m for m in mode_cut]))
+        result_label = "%s_globalklip_rad%03d-%03d_mode%03d-%03d" % (dataset_label, R_inner, R_out[-1], mode_cut[0], mode_cut[-1])
         klipsub_cube_fname = "%s/%s_res_cube.fits" % (result_dir, result_label)
         klippsf_cube_fname = "%s/%s_psf_cube.fits" % (result_dir, result_label)
         derot_klipsub_cube_fname = "%s/%s_derot_res_cube.fits" % (result_dir, result_label)
@@ -812,7 +955,10 @@ def global_klipsub(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut
         med_img_hdu = pyfits.PrimaryHDU(med_img.astype(np.float32))
         med_img_hdu.writeto(med_img_fname, clobber=True)
         print "Wrote median of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (med_img.nbytes/10.**6, med_img_fname)
-    return klip_config, klip_data
+    if fake_planet != None:
+        return klip_config, klip_data, coadd_min_detect, med_min_detect
+    else:
+        return klip_config, klip_data, annular_rms, zonal_rms
 
 def klipmod(ampguess, posguess_rho, posguess_theta, klipsub_archv_fname, klipsub_result_dir, klipmod_result_dir,
             template_img_fname, synthpsf_fname, synthpsf_rolloff, result_label, N_proc, mode_cut=None, do_MLE=True):

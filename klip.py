@@ -779,9 +779,9 @@ def eval_adiklip_srcmodel(p, op_fr, adiklip_config, adiklip_data, srcmodel, cost
 
 def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut, DPhi, Phi_0,
                   fwhm, min_refgap_fac, op_fr=None, N_proc=1, diagnos_stride=50, fake_planet=None,
-                  synth_psf_img=None, test_mode=False, use_svd=True, coadd_full_overlap_only=True,
-                  store_results=True, store_psf=False, store_archv=False, store_klbasis=False,
-                  track_mode=False, log_fobj=sys.stdout):
+                  synth_psf_img=None, coadd_img=None, med_img=None, test_mode=False, use_svd=True,
+                  coadd_full_overlap_only=True, store_results=True, store_psf=False, store_archv=False,
+                  store_klbasis=False, track_mode=False, result_label=None, log_fobj=sys.stdout):
     #
     # Load the data
     #
@@ -860,10 +860,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
         klip_data = None
     if diagnos_stride > 0:
         print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
-    klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
-                                                                            result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
-                                                                            store_psf=store_psf, store_archv=store_archv, store_klbasis=store_klbasis,
-                                                                            use_svd=use_svd, log_fobj=log_fobj)
+
     if fake_planet != None:
         R_fakep = fake_planet[0]
         PA_fakep = fake_planet[1]
@@ -874,24 +871,37 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
                                                                                                   diagnos_stride=diagnos_stride, store_psf=store_psf,
                                                                                                   store_archv=store_archv, store_klbasis=store_klbasis,
                                                                                                   use_svd=use_svd, log_fobj=log_fobj)
+        if coadd_img == None or med_img == None:
+            klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
+                                                                                    result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
+                                                                                    store_psf=store_psf, store_archv=store_archv, store_klbasis=store_klbasis,
+                                                                                    use_svd=use_svd, log_fobj=log_fobj)
+    else:
+        klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
+                                                                                result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
+                                                                                store_psf=store_psf, store_archv=store_archv, store_klbasis=store_klbasis,
+                                                                                use_svd=use_svd, log_fobj=log_fobj)
     #
     # Form mean and median of derotated residual images, and the mean and median of the PSF estimates.
     #
-    coadd_img = nanmean(derot_klipsub_cube, axis=0)
-    med_img = nanmedian(derot_klipsub_cube, axis=0)
-    if store_psf:
-        mean_klippsf_img = nanmean(klippsf_cube, axis=0)
-        med_klippsf_img = nanmedian(klippsf_cube, axis=0)
-    if coadd_full_overlap_only:
-        sum_collapse_img = np.sum(derot_klipsub_cube, axis=0)
-        exclude_ind = np.isnan(sum_collapse_img)
-        coadd_img[exclude_ind] = np.nan
-        med_img[exclude_ind] = np.nan
-    coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
+    if coadd_img == None or med_img == None:
+        coadd_img = nanmean(derot_klipsub_cube, axis=0)
+        med_img = nanmedian(derot_klipsub_cube, axis=0)
+        if store_psf:
+            mean_klippsf_img = nanmean(klippsf_cube, axis=0)
+            med_klippsf_img = nanmedian(klippsf_cube, axis=0)
+        if coadd_full_overlap_only:
+            sum_collapse_img = np.sum(derot_klipsub_cube, axis=0)
+            exclude_ind = np.isnan(sum_collapse_img)
+            coadd_img[exclude_ind] = np.nan
+            med_img[exclude_ind] = np.nan
+        coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
     if fake_planet != None:
         fakep_coadd_img = nanmean(fakep_derot_klipsub_cube, axis=0)
         fakep_med_img = nanmedian(fakep_derot_klipsub_cube, axis=0)
         if coadd_full_overlap_only:
+            sum_collapse_img = np.sum(fakep_derot_klipsub_cube, axis=0)
+            exclude_ind = np.isnan(sum_collapse_img)
             fakep_coadd_img[exclude_ind] = np.nan
             fakep_med_img[exclude_ind] = np.nan
     #
@@ -920,7 +930,8 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
         # Store the results
         #
         delimiter = '-'
-        result_label = "%s_globalklip_rad%03d-%03d_mode%03d-%03d" % (dataset_label, R_inner, R_out[-1], mode_cut[0], mode_cut[-1])
+        if result_label == None:
+            result_label = "%s_globalklip_rad%03d-%03d_mode%03d-%03d" % (dataset_label, R_inner, R_out[-1], mode_cut[0], mode_cut[-1])
         klipsub_cube_fname = "%s/%s_res_cube.fits" % (result_dir, result_label)
         klippsf_cube_fname = "%s/%s_psf_cube.fits" % (result_dir, result_label)
         derot_klipsub_cube_fname = "%s/%s_derot_res_cube.fits" % (result_dir, result_label)
@@ -956,9 +967,9 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
         med_img_hdu.writeto(med_img_fname, clobber=True)
         print "Wrote median of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (med_img.nbytes/10.**6, med_img_fname)
     if fake_planet != None:
-        return klip_config, klip_data, coadd_min_detect, med_min_detect
+        return klip_config, klip_data, coadd_img, med_img, coadd_min_detect, med_min_detect
     else:
-        return klip_config, klip_data, annular_rms, zonal_rms
+        return klip_config, klip_data, coadd_img, med_img, annular_rms, zonal_rms
 
 def klipmod(ampguess, posguess_rho, posguess_theta, klipsub_archv_fname, klipsub_result_dir, klipmod_result_dir,
             template_img_fname, synthpsf_fname, synthpsf_rolloff, result_label, N_proc, mode_cut=None, do_MLE=True):

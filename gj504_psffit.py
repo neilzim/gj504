@@ -236,8 +236,8 @@ if __name__ == "__main__":
     print 'Fitting PSF in KLIP residual from October reduction'
     result_label = 'gj504_longL_octcanon'
     res_img_fname = "%s/gj504_longL_octcanon_srcklip_rad255_dphi90_mode000_res_coadd.fits" % klipsub_result_dir 
-    psol_octcanon, sampler_octcanon = psffit(ampguess=0.7, posguess_rho=238., posguess_theta=-33., src_img_fname=res_img_fname,
+    psol_octcanon = psffit(ampguess=0.7, posguess_rho=238., posguess_theta=-33., src_img_fname=res_img_fname,
                                              psffit_result_dir=klipmod_result_dir, template_img_fname=template_img_fname,
                                              synthpsf_fname=synthpsf_fname, synthpsf_rolloff=synthpsf_rolloff, result_label=result_label,
-                                             do_MLE=True, do_MCMC=True)
-    amp_flatchain = sampler_octcanon.flatchain[:,0]
+                                             do_MLE=True, do_MCMC=False)
+#    amp_flatchain = sampler_octcanon.flatchain[:,0]

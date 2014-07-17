@@ -100,13 +100,13 @@ for i, (R_fp, flux_fp) in enumerate(zip(R_arr, flux_arr)):
             if j == 0:
                 klip_config, klip_data, coadd_img, med_img, coadd_detlim, med_detlim = klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut=[K], DPhi=[360.], Phi_0=[0.],
                                                                                                      fwhm=fwhm, min_refgap_fac=[refgap_fac], op_fr=None, N_proc=N_proc, diagnos_stride=diagnos_stride,
-                                                                                                     fake_planet=(R_fp, PA_fp, flux_fp), synth_psf_img=synthpsf_img, coadd_img=None, med_img=None,
+                                                                                                     fake_planets=zip([R_fp],[PA_fp],[flux_fp]), synth_psf_img=synthpsf_img, coadd_img=None, med_img=None,
                                                                                                      test_mode=test_mode, use_svd=True, coadd_full_overlap_only=True, store_results=store_results,
                                                                                                      store_psf=False, store_archv=False, log_fobj=log_fobj)
             else:
                 klip_config, klip_data, coadd_img, med_img, coadd_detlim, med_detlim = klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut=[K], DPhi=[360.], Phi_0=[0.],
                                                                                                      fwhm=fwhm, min_refgap_fac=[refgap_fac], op_fr=None, N_proc=N_proc, diagnos_stride=diagnos_stride,
-                                                                                                     fake_planet=(R_fp, PA_fp, flux_fp), synth_psf_img=synthpsf_img, coadd_img=coadd_img, med_img=med_img,
+                                                                                                     fake_planets=zip([R_fp],[PA_fp],[flux_fp]), synth_psf_img=synthpsf_img, coadd_img=coadd_img, med_img=med_img,
                                                                                                      test_mode=test_mode, use_svd=True, coadd_full_overlap_only=True, store_results=store_results,
                                                                                                      store_psf=False, store_archv=False, log_fobj=log_fobj)
             detlim_grid[i, j, k] = med_detlim

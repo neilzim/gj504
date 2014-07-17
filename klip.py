@@ -223,16 +223,16 @@ def crop_and_rolloff_psf(psf_fname, rolloff_rad = None, cropmarg = 1):
         crop_psf_img *= np.exp( -(Rsqrd / rolloff_rad**2)**2 )
     return crop_psf_img
 
-def add_fake_planets(data_cube, parang_seq, psf_img, R_p, PA_p, flux_p):
+def add_fake_planets(data_cube, parang_seq, psf_img, fake_planets):
     fr_width = data_cube.shape[1]
     data_cent_xy = ((fr_width - 1)/2., (fr_width - 1)/2.)
     psf_width = psf_img.shape[0]
     psf_cent_xy = ((psf_width - 1)/2., (psf_width - 1)/2.)
     N_fr = len(parang_seq)
     psf_peak = np.max(psf_img)
-    amp_p = flux_p/psf_peak
     fakep_data_cube = data_cube.copy()
-    for R, PA, amp in zip(R_p, PA_p, amp_p):
+    for R, PA, flux in fake_planets:
+        amp = flux/psf_peak
         rot_PA_seq = np.deg2rad([PA - parang for parang in parang_seq])
         rot_xy_seq = [( data_cent_xy[0] + R*np.cos(np.pi/2 + rot_PA),
                         data_cent_xy[1] + R*np.sin(np.pi/2 + rot_PA) ) for rot_PA in rot_PA_seq]
@@ -778,10 +778,10 @@ def eval_adiklip_srcmodel(p, op_fr, adiklip_config, adiklip_data, srcmodel, cost
     return sumofsq_cost
 
 def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut, DPhi, Phi_0,
-                  fwhm, min_refgap_fac, op_fr=None, N_proc=1, diagnos_stride=50, fake_planet=None,
-                  synth_psf_img=None, coadd_img=None, med_img=None, test_mode=False, use_svd=True,
-                  coadd_full_overlap_only=True, store_results=True, store_psf=False, store_archv=False,
-                  store_klbasis=False, track_mode=False, result_label=None, log_fobj=sys.stdout):
+                  fwhm, min_refgap_fac, op_fr=None, N_proc=1, diagnos_stride=50, fake_planets=None,
+                  synth_psf_img=None, coadd_img=None, med_img=None, test_mode=False,
+                  use_svd=True, coadd_full_overlap_only=True, store_results=True, store_psf=False,
+                  store_archv=False, store_klbasis=False, track_mode=False, result_label=None, log_fobj=sys.stdout):
     #
     # Load the data
     #
@@ -861,17 +861,14 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
     if diagnos_stride > 0:
         print "Using %d of the %d logical processors available" % (N_proc, multiprocessing.cpu_count())
 
-    if fake_planet != None:
-        R_fakep = fake_planet[0]
-        PA_fakep = fake_planet[1]
-        flux_fakep = fake_planet[2]
-        fakep_data_cube = add_fake_planets(data_cube, parang_seq, psf_img=synth_psf_img, R_p=[R_fakep], PA_p=[PA_fakep], flux_p=[flux_fakep])
+    if fake_planets != None:
+        fakep_data_cube = add_fake_planets(data_cube, parang_seq, psf_img=synth_psf_img, fake_planets=fake_planets)
         fakep_klipsub_cube, fakep_klippsf_cube, fakep_derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=fakep_data_cube, config_dict=klip_config,
                                                                                                   result_dict=klip_data, result_dir=result_dir,
                                                                                                   diagnos_stride=diagnos_stride, store_psf=store_psf,
                                                                                                   store_archv=store_archv, store_klbasis=store_klbasis,
                                                                                                   use_svd=use_svd, log_fobj=log_fobj)
-        if coadd_img == None or med_img == None:
+        if (coadd_img == None or med_img == None) and len(fake_planets) == 1:
             klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                                     result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
                                                                                     store_psf=store_psf, store_archv=store_archv, store_klbasis=store_klbasis,
@@ -884,7 +881,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
     #
     # Form mean and median of derotated residual images, and the mean and median of the PSF estimates.
     #
-    if coadd_img == None or med_img == None:
+    if (coadd_img == None or med_img == None) and (fake_planets == None or len(fake_planets) == 1):
         coadd_img = nanmean(derot_klipsub_cube, axis=0)
         med_img = nanmedian(derot_klipsub_cube, axis=0)
         if store_psf:
@@ -896,7 +893,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
             coadd_img[exclude_ind] = np.nan
             med_img[exclude_ind] = np.nan
         coadd_rebin2x2_img = coadd_img.reshape(coadd_img.shape[0]/2, 2, coadd_img.shape[1]/2, 2).mean(1).mean(2)
-    if fake_planet != None:
+    if fake_planets != None:
         fakep_coadd_img = nanmean(fakep_derot_klipsub_cube, axis=0)
         fakep_med_img = nanmedian(fakep_derot_klipsub_cube, axis=0)
         if coadd_full_overlap_only:
@@ -907,7 +904,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
     #
     # Get statistics from co-added and median residual images
     #
-    if fake_planet != None:
+    if fake_planets != None and len(fake_planets) == 1:
         #plt.figure(figsize=(12,6))
         #plt.subplot(1,3,1)
         #plt.imshow(coadd_img, origin='lower', interpolation='nearest')
@@ -919,11 +916,12 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
         #plt.imshow(fakep_coadd_img - coadd_img, origin='lower', interpolation='nearest')
         #plt.colorbar(orientation='vertical', shrink=0.5)
         #plt.show()
-        coadd_rms, coadd_min_detect, med_rms, med_min_detect = get_residual_fake_planet_stats(config_dict=klip_config, Phi_0=Phi_0, R_p=R_fakep, PA_p=PA_fakep,
-                                                                                              flux_p = flux_fakep, fwhm=int(round(fwhm)),
+        coadd_rms, coadd_min_detect, med_rms, med_min_detect = get_residual_fake_planet_stats(config_dict=klip_config, Phi_0=Phi_0, R_p=fake_planets[0][0],
+                                                                                              PA_p=fake_planets[0][1], flux_p=fake_planets[0][2],
+                                                                                              fwhm=int(round(fwhm)),
                                                                                               planet_coadd_img=fakep_coadd_img, planet_med_img=fakep_med_img,
                                                                                               true_coadd_img=coadd_img, true_med_img=med_img, log_fobj=log_fobj)
-    else:
+    if fake_planets == None or (fake_planets != None and len(fake_planets) == 1):
         annular_rms, zonal_rms = get_residual_stats(config_dict=klip_config, Phi_0=Phi_0, coadd_img=coadd_img, med_img=med_img)
     if store_results == True:
         #
@@ -951,9 +949,11 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
             med_klippsf_img_hdu = pyfits.PrimaryHDU(med_klippsf_img.astype(np.float32))
             med_klippsf_img_hdu.writeto(med_klippsf_img_fname, clobber=True)
             print "Wrote median of KLIP PSF estimate cube (%.3f Mb) to %s" % (med_klippsf_img.nbytes/10.**6, med_klippsf_img_fname)
-        klipsub_cube_hdu = pyfits.PrimaryHDU(klipsub_cube.astype(np.float32))
-        klipsub_cube_hdu.writeto(klipsub_cube_fname, clobber=True)
-        print "Wrote KLIP-subtracted cube (%.3f Mb) to %s" % (klipsub_cube.nbytes/10.**6, klipsub_cube_fname)
+        if klipsub_cube:
+            klipsub_cube_hdu = pyfits.PrimaryHDU(klipsub_cube.astype(np.float32))
+            klipsub_cube_hdu.writeto(klipsub_cube_fname, clobber=True)
+            print "Wrote KLIP-subtracted cube (%.3f Mb) to %s" % (klipsub_cube.nbytes/10.**6, klipsub_cube_fname)
+        
         derot_klipsub_cube_hdu = pyfits.PrimaryHDU(derot_klipsub_cube.astype(np.float32))
         derot_klipsub_cube_hdu.writeto(derot_klipsub_cube_fname, clobber=True)
         print "Wrote derotated, KLIP-subtracted image cube (%.3f Mb) to %s" % (derot_klipsub_cube.nbytes/10.**6, derot_klipsub_cube_fname)
@@ -966,8 +966,10 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
         med_img_hdu = pyfits.PrimaryHDU(med_img.astype(np.float32))
         med_img_hdu.writeto(med_img_fname, clobber=True)
         print "Wrote median of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (med_img.nbytes/10.**6, med_img_fname)
-    if fake_planet != None:
-        return klip_config, klip_data, coadd_img, med_img, coadd_min_detect, med_min_detect
+    if fake_planets != None:
+        return klip_config, klip_data, fakep_coadd_img, fakep_med_img
+        if len(fake_planets) == 1:
+            return klip_config, klip_data, fakep_coadd_img, fakep_med_img, coadd_min_detect, med_min_detect
     else:
         return klip_config, klip_data, coadd_img, med_img, annular_rms, zonal_rms
 

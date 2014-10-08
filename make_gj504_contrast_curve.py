@@ -20,30 +20,31 @@ N_proc = 20
 #diagnos_stride = 100
 diagnos_stride = -1 
 
-#dataset_label = 'gj504_longL_octcanon_2x2bin'
-dataset_label = 'gj504_longL_octcanon'
+dataset_label = 'gj504_longL_octcanon_2x2bin'
+#dataset_label = 'gj504_longL_octcanon'
 data_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/reduc')
-result_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/klipsub_results')
-log_fname = result_dir + '/gj504_contrast_curve_jun3_log.txt'
+result_dir = os.path.expanduser('/disk1/zimmerman/GJ504/apr21_longL/klipsub_results_sep2014')
+log_fname = result_dir + '/gj504_contrast_curve_sep16_log.txt'
 log_fobj = open(log_fname, 'w')
 
-synthpsf_fname = '%s/gj504_longL_psf_model.fits' % data_dir
-synthpsf_img = crop_and_rolloff_psf(synthpsf_fname, rolloff_rad=20.)
-#synthpsf_fname = '%s/gj504_longL_2x2bin_psf_model.fits' % data_dir
-#synthpsf_img = crop_and_rolloff_psf(synthpsf_fname, rolloff_rad=10.)
+#synthpsf_fname = '%s/gj504_longL_psf_model.fits' % data_dir
+#synthpsf_img = crop_and_rolloff_psf(synthpsf_fname, rolloff_rad=20.)
+synthpsf_fname = '%s/gj504_longL_2x2bin_psf_model.fits' % data_dir
+synthpsf_img = crop_and_rolloff_psf(synthpsf_fname, rolloff_rad=10.)
 
 #test_res_img_fname = result_dir + '/gj504_longL_octcanon_globalklip_rad20-40-80-120-170-220-260-300_mode500-500-500-500-500-500-500-500_res_med.fits'
 #test_res_img_fname = result_dir + '/gj504_longL_octcanon_globalklip_rad20-40-80-120-170-220-260-300_mode500-500-500-500-500-500-500-500_res_coadd.fits'
 #test_res_img_fname = result_dir + '/gj504_longL_octcanon_2x2bin_globalklip_rad005-150_mode600-600_res_med.fits'
 #test_res_img_fname = result_dir + '/gj504_longL_octcanon_2x2bin_globalklip_rad005-150_mode600-600_res_med.fits'
-test_res_img_fname = result_dir + '/gj504_longL_octcanon_globalklip_rad008-300_mode600-600_res_coadd.fits'
+#test_res_img_fname = result_dir + '/gj504_longL_octcanon_globalklip_rad008-300_mode600-600_res_coadd.fits'
+test_res_img_fname = result_dir + '/gj504_longL_octcanon_2x2bin_globalklip_rad005-150_mode600-600_res_coadd.fits'
 
-pix_scale = 0.01076 #arc sec
-fwhm = 4.
-star_peak = 6297.63 * (0.523973 / 0.0582192)
-#pix_scale = 2*0.01076 #arc sec
-#fwhm = 2.
-#star_peak = 6290.74 * (0.523973 / 0.0582192)
+#pix_scale = 0.01076 #arc sec
+#fwhm = 4.
+#star_peak = 6297.63 * (0.523973 / 0.0582192)
+pix_scale = 2*0.01076 #arc sec
+fwhm = 2.
+star_peak = 6290.74 * (0.523973 / 0.0582192)
 
 PA_arr = np.arange(0, 360, 30)
 #PA_arr = np.arange(0, 360, 180)

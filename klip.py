@@ -67,14 +67,11 @@ class eval_adiklip_srcmodel_task(object):
         return 'frame %d' % (self.fr_ind+1)
 
 class klipsub_task(object):
-    #def __init__(self, fr_ind, data_cube, config_dict, result_dict, result_dir, diagnos_stride,
-    #             store_psf=False, store_klbasis=False, use_svd=True):
     def __init__(self, fr_ind, data_cube, fr_shape, parang_seq, mode_cut, op_fr, op_rad,
                  op_az, ref_table, zonemask_1d, zonemask_2d, result_dict, result_dir,
                  diagnos_stride, store_psf=False, store_klbasis=False, use_svd=True):
          self.fr_ind = fr_ind
          self.data_cube = data_cube
-         #self.config_dict = config_dict
 
          self.fr_shape = fr_shape
          self.parang_seq = parang_seq
@@ -93,15 +90,6 @@ class klipsub_task(object):
          self.store_klbasis = store_klbasis
          self.use_svd = use_svd
     def __call__(self):
-        #fr_shape = self.config_dict['fr_shape']
-        #parang_seq = self.config_dict['parang_seq']
-        #mode_cut = self.config_dict['mode_cut']
-        #op_fr = self.config_dict['op_fr']
-        #op_rad = self.config_dict['op_rad']
-        #op_az = self.config_dict['op_az']
-        #ref_table = self.config_dict['ref_table']
-        #zonemask_table_1d = self.config_dict['zonemask_table_1d']
-        #zonemask_table_2d = self.config_dict['zonemask_table_2d']
         fr_shape = self.fr_shape
         parang_seq = self.parang_seq
         mode_cut = self.mode_cut
@@ -140,11 +128,7 @@ class klipsub_task(object):
             for az_ind in op_az[rad_ind]:
                 I = np.ravel(data_cube[fr_ind,:,:])[ zonemask_1d[rad_ind][az_ind] ].copy() 
                 R = np.zeros((ref_table[rad_ind].shape[0], zonemask_1d[rad_ind][az_ind].shape[0]))
-                #I = np.ravel(data_cube[fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy() 
-                #R = np.zeros((ref_table[fr_ind][rad_ind].shape[0], zonemask_table_1d[fr_ind][rad_ind][az_ind].shape[0]))
-                #for j, ref_fr_ind in enumerate(ref_table[fr_ind][rad_ind]):
                 for j, ref_fr_ind in enumerate(ref_table[rad_ind]):
-                    #R[j,:] = np.ravel(data_cube[ref_fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy()
                     R[j,:] = np.ravel(data_cube[ref_fr_ind,:,:])[ zonemask_1d[rad_ind][az_ind] ].copy()
                 if mode_cut[rad_ind] > 0: # do PCA on reference PSF stack
                     if use_svd == False: # following Soummer et al. 2012
@@ -159,20 +143,15 @@ class klipsub_task(object):
                         Z, sv, N_modes = get_pca_basis(R = R, cutoff = mode_cut[rad_ind])
                     F = I - I.dot(Z.T).dot(Z)
                     if store_psf:
-                        #klippsf_zone_img = reconst_zone(I_mean + I - F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                         klippsf_zone_img = reconst_zone(I_mean + I - F, zonemask_2d[rad_ind][az_ind], fr_shape)
-                else: # classical ADI: subtract mean refernce PSF
-                    R_mean = R.mean(axis = 0)
+                else: # classical ADI: subtract median refernce PSF
+                    R_mean = nanmedian(R, axis = 0)
                     F = I - R_mean
                     if store_psf:
-                        #klippsf_zone_img = reconst_zone(R_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                         klippsf_zone_img = reconst_zone(R_mean, zonemask_2d[rad_ind][az_ind], fr_shape)
                 if store_psf:
-                    #klippsf_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klippsf_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
                     klippsf_img[ zonemask_2d[rad_ind][az_ind] ] = klippsf_zone_img[ zonemask_2d[rad_ind][az_ind] ]
                 klipsub_zone_img = reconst_zone(F, zonemask_2d[rad_ind][az_ind], fr_shape)
-                #klipsub_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = klipsub_zone_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ]
-                #submask_img[ zonemask_table_2d[fr_ind][rad_ind][az_ind] ] = 1.
                 klipsub_img[ zonemask_2d[rad_ind][az_ind] ] = klipsub_zone_img[ zonemask_2d[rad_ind][az_ind] ]
                 submask_img[ zonemask_2d[rad_ind][az_ind] ] = 1.
 
@@ -180,13 +159,7 @@ class klipsub_task(object):
                     result_dict[fr_ind][rad_ind][az_ind]['F'] = F.astype(np.float32)
                     if mode_cut[rad_ind] > 0:
                         result_dict[fr_ind][rad_ind][az_ind]['Z'] = Z.astype(np.float32)
-                    #result_dict[fr_ind][rad_ind][az_ind]['I'] = I
-                    #result_dict[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
-                    #result_dict[fr_ind][rad_ind][az_ind]['sv'] = sv
-                    #result_dict[fr_ind][rad_ind][az_ind]['I_proj'] = I_proj
                 if diagnos_stride > 0 and fr_ind % diagnos_stride == 0 and mode_cut[rad_ind] > 0:
-                    #klbasis_cube[:N_modes,:,:] += reconst_zone_cube(Z, zonemask_table_2d[fr_ind][rad_ind][az_ind],
-                    #                                                cube_dim = (N_modes, fr_shape[0], fr_shape[1]))
                     klbasis_cube[:N_modes,:,:] += reconst_zone_cube(Z, zonemask_2d[rad_ind][az_ind],
                                                                     cube_dim = (N_modes, fr_shape[0], fr_shape[1]))
                     print "Frame %d, annulus %d/%d, sector %d/%d: RMS before/after sub: %0.2f / %0.2f" %\
@@ -195,12 +168,9 @@ class klipsub_task(object):
         # De-rotate the KLIP-subtracted image
         derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
         derot_submask_img = rotate(submask_img, -parang_seq[fr_ind], reshape=False)
-        #derot_submask_hdu = pyfits.PrimaryHDU(derot_submask_img.astype(np.float32))
-        #derot_submask_hdu.writeto("%s/submask_fr%03d.fits" % (result_dir, fr_ind), clobber=True)
         exc_ind = np.where(derot_submask_img < 0.9)
         derot_klipsub_img[exc_ind] = np.nan
 
-        #derot_klipsub_img = rotate(klipsub_img, -parang_seq[fr_ind], reshape=False)
         if diagnos_stride > 0 and fr_ind % diagnos_stride == 0:
             print "***** Frame %d has been PSF-sub'd and derotated. *****" % (fr_ind+1)
             if store_klbasis == True and klbasis_cube:
@@ -483,7 +453,7 @@ def load_data_cube(datacube_fname, outer_search_rad):
     return cropped_cube
 
 def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inner, R_out, DPhi, Phi_0, op_rad,
-                           N_az, op_az, parang_seq, fwhm, min_refgap_fac, track_mode, diagnos_stride):
+                           N_az, op_az, parang_seq, fwhm, min_refgap_fac, track_mode, diagnos_stride, use_svd):
     #
     # Determine table of references for each frame, and form search zone pixel masks (1-D and 2-D formats).
     #
@@ -496,18 +466,21 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
         print "\tR_inner:", R_inner, "; R_out:", R_out
         print "\tPhi_0, DPhi, N_az:", Phi_0, DPhi, N_az
         print "\tmode_cut:", mode_cut
-    for rad_ind in op_rad:
-        R2 = R_out[rad_ind]
-        if rad_ind == 0:
-            R1 = R_inner
-        else:
-            R1 = R_out[rad_ind-1]
-        if track_mode:
-            min_refang = DPhi[rad_ind]/2.
-        else:
-            min_refang = np.arctan(min_refgap_fac[rad_ind]*fwhm/((R1 + R2)/2))*180/np.pi
-        if diagnos_stride > 0: print "\trad_ind = %d: min_refang = %0.2f deg" % (rad_ind, min_refang)
-    if diagnos_stride > 0: print ""
+        for rad_ind in op_rad:
+            if mode_cut[rad_ind] > 0:
+                R2 = R_out[rad_ind]
+                if rad_ind == 0:
+                    R1 = R_inner
+                else:
+                    R1 = R_out[rad_ind-1]
+                if track_mode:
+                    min_refang = DPhi[rad_ind]/2.
+                else:
+                    min_refang = np.arctan(min_refgap_fac[rad_ind]*fwhm/((R1 + R2)/2))*180/np.pi
+            else:
+                min_refang = 0
+            print "\trad_ind = %d: min_refang = %0.2f deg" % (rad_ind, min_refang)
+        print ""
 
     if xycent == None:
         xycent = ((fr_shape[0] - 1)/2., (fr_shape[0] - 1)/2.)
@@ -534,6 +507,8 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
             Phi_end.append(Phi_beg)
             if track_mode:
                 min_refang = DPhi[rad_ind]/2.
+            elif mode_cut[rad_ind] == 0:
+                min_refang = 0.
             else:
                 min_refang = np.arctan(min_refgap_fac[rad_ind]*fwhm/((R1 + R2)/2))*180/np.pi
             ref_table[fr_ind][rad_ind] = np.where(np.greater_equal(np.abs(parang_seq - parang_seq[fr_ind]), min_refang))[0]
@@ -564,10 +539,10 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, mode_cut, N_rad, R_inn
                     print 'Search zone size for rad ind %d, az_ind %d is %d pixels' % (rad_ind, az_ind, zonemask_1d.shape[0])
                     if rad_ind == N_rad-1 and az_ind == N_az[rad_ind]-1:
                         print ""
-                if zonemask_1d.shape[0] < len(ref_table[fr_ind][rad_ind]):
+                if zonemask_1d.shape[0] < len(ref_table[fr_ind][rad_ind]) and use_svd == False:
                     print "get_ref_table: warning - size of search zone for frame %d, rad_ind %d, az_ind %d is %d < %d, the # of ref frames for this annulus" %\
                           (fr_ind, rad_ind, az_ind, zonemask_1d.shape[0], len(ref_table[fr_ind][rad_ind]))
-                    print "This has previously resulted in unexpected behavior, namely a reference covariance matrix that is not positive definite."
+                    print "This has previously resulted in unexpected behavior, namely a reference covariance matrix that is not positive definite. To work around this, set the use_svd parameter (given to klip_subtract) to True."
         for rad_ind in op_rad:
             if diagnos_stride > 0 and fr_ind%diagnos_stride == 0:
                 print "Frame %d/%d, annulus %d/%d: %d valid reference frames." %\
@@ -845,7 +820,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
                                                                              op_rad=op_rad, N_az=N_az, op_az=op_az,
                                                                              parang_seq=parang_seq, fwhm=fwhm,
                                                                              min_refgap_fac=min_refgap_fac, track_mode=track_mode,
-                                                                             diagnos_stride=diagnos_stride)
+                                                                             diagnos_stride=diagnos_stride, use_svd=use_svd)
     # 
     # Perform zone-by-zone KLIP subtraction on each frame
     #
@@ -868,7 +843,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
                                                                                                   diagnos_stride=diagnos_stride, store_psf=store_psf,
                                                                                                   store_archv=store_archv, store_klbasis=store_klbasis,
                                                                                                   use_svd=use_svd, log_fobj=log_fobj)
-        if (coadd_img == None or med_img == None) and len(fake_planets) == 1:
+        if (coadd_img == None or med_img == None) and len(fake_planets) == 1: #need to do a clean "control" case subtraction with no planets
             klipsub_cube, klippsf_cube, derot_klipsub_cube = do_mp_klip_subtraction(N_proc = N_proc, data_cube=data_cube, config_dict=klip_config,
                                                                                     result_dict=klip_data, result_dir=result_dir, diagnos_stride=diagnos_stride,
                                                                                     store_psf=store_psf, store_archv=store_archv, store_klbasis=store_klbasis,
@@ -949,7 +924,7 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
             med_klippsf_img_hdu = pyfits.PrimaryHDU(med_klippsf_img.astype(np.float32))
             med_klippsf_img_hdu.writeto(med_klippsf_img_fname, clobber=True)
             print "Wrote median of KLIP PSF estimate cube (%.3f Mb) to %s" % (med_klippsf_img.nbytes/10.**6, med_klippsf_img_fname)
-        if klipsub_cube:
+        if klipsub_cube != None:
             klipsub_cube_hdu = pyfits.PrimaryHDU(klipsub_cube.astype(np.float32))
             klipsub_cube_hdu.writeto(klipsub_cube_fname, clobber=True)
             print "Wrote KLIP-subtracted cube (%.3f Mb) to %s" % (klipsub_cube.nbytes/10.**6, klipsub_cube_fname)
@@ -967,9 +942,10 @@ def klip_subtract(dataset_label, data_dir, result_dir, R_inner, R_out, mode_cut,
         med_img_hdu.writeto(med_img_fname, clobber=True)
         print "Wrote median of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (med_img.nbytes/10.**6, med_img_fname)
     if fake_planets != None:
-        return klip_config, klip_data, fakep_coadd_img, fakep_med_img
         if len(fake_planets) == 1:
-            return klip_config, klip_data, fakep_coadd_img, fakep_med_img, coadd_min_detect, med_min_detect
+            return klip_config, klip_data, coadd_img, med_img, coadd_min_detect, med_min_detect
+        else:
+            return klip_config, klip_data, fakep_coadd_img, fakep_med_img
     else:
         return klip_config, klip_data, coadd_img, med_img, annular_rms, zonal_rms
 
